@@ -180,7 +180,7 @@ Press `s` to open Settings:
 
 ### Interface language
 
-Simplified Chinese, English and Japanese are supported. The full-screen interface, command-line output, error messages and the authorization page in the browser all use the same language. By default it follows the system language: it reads the environment variables `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` in that order, and on Windows also the system display language. Chinese systems (including Traditional Chinese) show Simplified Chinese, Japanese systems show Japanese, and all other languages show English.
+Simplified Chinese, English and Japanese are supported. The full-screen interface, command-line output, error messages and the authorization page in the browser all use the same language. By default it follows the system language: it reads the environment variables `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` in that order, then on Windows the system display language, and finally the runtime's default locale on every platform. Chinese systems (including Traditional Chinese) show Simplified Chinese, Japanese systems show Japanese, and all other languages show English.
 
 To fix a language, switch it in Settings or run `config --language <auto|zh-CN|en|ja>` (`auto` goes back to following the system). Share titles and file names stay as they are. The JSON fields and reason codes in `status` output do not change with the language, so they are safe to use in scripts.
 

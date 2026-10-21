@@ -178,7 +178,7 @@ xattr -d com.apple.quarantine ./pikpak-dl-cli-darwin-arm64
 
 ### 界面语言
 
-支持简体中文、English 和日本語，全屏界面、命令行输出、错误信息和浏览器里的授权页都使用同一种语言。默认跟随系统语言：依次读取环境变量 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`，Windows 上再读取系统显示语言。中文系统（包括繁体中文）显示简体中文，日文系统显示日文，其他语言显示英文。
+支持简体中文、English 和日本語，全屏界面、命令行输出、错误信息和浏览器里的授权页都使用同一种语言。默认跟随系统语言：依次读取环境变量 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`，Windows 上再读取系统显示语言，最后读取运行环境的默认区域设置。中文系统（包括繁体中文）显示简体中文，日文系统显示日文，其他语言显示英文。
 
 想固定某种语言时，在设置页切换，或者运行 `config --language <auto|zh-CN|en|ja>`（`auto` 恢复跟随系统）。分享标题和文件名保持原样；`status` 输出的 JSON 字段与原因代码不随语言变化，可以放心在脚本里使用。
 

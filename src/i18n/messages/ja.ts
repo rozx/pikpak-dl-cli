@@ -12,7 +12,7 @@ export const ja: Messages = {
     invalid_input: "入力が無効です。--help を確認してください。",
     state_unavailable: "タスクデータベースを利用できません。状態ディレクトリの権限とディスクの空き容量を確認してください。",
     newer_schema: "タスクデータベースは新しいバージョンで作成されています。プログラムを更新してください。古いバージョンで書き込まないでください。",
-    backup_review_required: "これはタスクデータベースのバックアップです。外部操作と配置結果を確認するまで、そのまま再開することはできません。",
+    backup_review_required: "これはタスクデータベースのバックアップです。外部操作とダウンロード済みファイルの受け渡し状況を確認するまで、そのまま再開することはできません。",
     instance_busy: "別のインスタンスがタスクデータベースを使用中です。watch を停止してから変更コマンドを実行してください。",
     unsupported_platform: "このプラットフォームには検証済みの実行環境がまだありません。",
     account_mismatch: "現在のアカウントはこれらのタスクの所有者ではありません。対応するアカウントでログインしてください。",
@@ -273,7 +273,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
 
   keys: {
     details: "詳細", retry: "再試行", cancel: "取消",
-    pauseAll: (selectedPaused, anyPaused) => selectedPaused ? "再開/全て" : anyPaused ? "停止/全て開始" : "停止/全て", releaseAll: "解放/全て", folder: "フォルダ",
+    pauseAll: (selectedPaused, anyPaused) => selectedPaused ? "再開/全て開始" : anyPaused ? "停止/全て開始" : "停止/全て", releaseAll: "解放/全て", folder: "フォルダ",
     paste: "貼付", settings: "設定", quit: "終了", confirm: "確定", back: "戻る", submit: "送信", releaseCopy: "クラウドのコピーを解放", openFolder: "フォルダを開く",
     save: "保存", discard: "破棄", select: "選択", adjust: "調整", view: "表示", edit: "変更", toggle: "切替", reauthorize: "再認可", logout: "ログアウト", confirmLogout: "ログアウトする",
   },

@@ -21,7 +21,8 @@ const source = (label: string) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").r
 const labelPattern = new RegExp([...LABELS].sort((a, b) => b.length - a.length)
   .map(label => SPACED.test(label) ? `(?<![\\p{L}\\p{N}])${source(label)}(?![\\p{L}])` : source(label)).join("|"), "giu");
 // 这些修饰词说明后面的密码不是分享的提取码：压缩包的解压密码、账号或保险箱密码、Wi-Fi 密码等。
-const NOT_SHARE = /(?:解压|解壓|压缩包?|壓縮包?|解凍|圧縮|압축(?:\s*해제)?|unzip|unpack|archive|decompress(?:ion)?|extract|zip|rar|7z|7-zip|登录|登錄|登入|账号|賬號|帳號|账户|帳戶|ログイン|로그인|login|log-in|sign-in|account|vault|保险箱|保險箱|金库|金庫|wi-?fi)[\s_-]*(?:文件|檔案|ファイル|file|的|の)?[\s_-]*$/iu;
+// 拉丁字母的修饰词必须是独立的单词：“movie.rar 密码：…”中的 rar 是文件扩展名，后面仍是提取码。
+const NOT_SHARE = /(?:解压|解壓|压缩包?|壓縮包?|解凍|圧縮|압축(?:\s*해제)?|登录|登錄|登入|账号|賬號|帳號|账户|帳戶|ログイン|로그인|保险箱|保險箱|金库|金庫|(?<![\p{L}\p{N}.])(?:unzip|unpack|archive|decompress(?:ion)?|extract|zip|rar|7z|7-zip|login|log-in|sign-in|account|vault|wi-?fi))[\s_-]*(?:文件|檔案|ファイル|file|的|の)?[\s_-]*$/iu;
 // 文本与标注先做 NFKC 归一：全角冒号、全角字母数字与半角片假名都按常规写法比较。
 // 值只在同一行内查找：标注后为空时（例如 PikPak 网页版日文模板漏填密码）不会把下一行的文件名当成提取码。
 const H = "[^\\S\\r\\n]", MARKS = "[\\u200e\\u200f\\u061c]*", OPEN = "[「『【\\[(（\"'“‘《]?";
@@ -29,8 +30,9 @@ const TOKEN = "([^\\s，。,；;<>「」『』【】\\[\\]()（）\"'“”‘�
 const VALUES: Record<"explicit" | "connector" | "nextLine" | "spaced" | "adjacent" | "is", RegExp> = {
   explicit: new RegExp(`${MARKS}${H}*${MARKS}[:：=＝]${H}*${MARKS}${OPEN}${TOKEN}`, "uy"),
   connector: new RegExp(`${H}*(?:是|为|為|は)${H}*${OPEN}${ASCII}`, "uy"),
-  // 冒号在行尾、下一行只有一串字母数字。
-  nextLine: new RegExp(`${H}*[:：]${H}*\\r?\\n${H}*${ASCII}${H}*(?=\\r?\\n|$)`, "uy"),
+  // 冒号在行尾、下一行只有一串字母数字，且这一行是最后一行或后面是空行：
+  // 分享模板中标注为空、下一行是文件名、再下一行是说明时，不把文件名当成提取码。
+  nextLine: new RegExp(`${H}*[:：]${H}*\\r?\\n${H}*${ASCII}${H}*(?=$|\\r?\\n${H}*(?:\\r?\\n|$))`, "uy"),
   spaced: new RegExp(`${H}+${OPEN}${TOKEN}`, "uy"),
   adjacent: new RegExp(ASCII, "uy"),
   is: new RegExp(`${H}+is${H}+${ASCII}`, "iuy"),

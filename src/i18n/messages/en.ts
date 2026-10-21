@@ -331,7 +331,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
   settings: {
     title: "Settings",
     account: "Account", output: "Download folder", clipboard: "Clipboard watch", connections: "Connections", activeFiles: "Concurrent files", language: "Language", about: "About",
-    accountNote: "Enter to view account, quota and permissions, authorize again or sign out",
+    accountNote: "Enter: account, membership, quota, permissions; authorize again or sign out",
     outputEditing: "Type or paste a folder, Enter to save, Esc to discard",
     outputNote: "New and not-yet-started shares use it; started or completed shares keep theirs",
     clipboardNote: "When off, share text can only be pasted with a",

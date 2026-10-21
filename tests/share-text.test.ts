@@ -18,10 +18,15 @@ test("PikPak 网页版各语言复制的分享文本都能识别链接与提取�
 });
 
 test("网页版日文模板漏填密码：识别为无码分享，不把下一行的文件名当成提取码", () => {
+  // 模板原文含字面的反斜杠与 n（语言包中多转义了一层，见 support-multilingual-share-text 的 design Evidence）。
   const text = `${link}\n\\nパスワード: \n\\nMovie2024\n\\nこのコンテンツをコピーした後、PikPak アプリを開いて、超高速のインスタント ブロードキャストをお楽しみください`;
   expect(parseShares(text)).toEqual({ shares: share(""), issues: [] });
   // 用户补上密码后照常识别。
   expect(parseShares(text.replace("パスワード: ", "パスワード: w2k9")).shares).toEqual(share("w2k9"));
+  // PikPak 修好多余的换行但仍漏填密码时，标注后的冒号在行尾、下一行是不带后缀的文件名、再下一行是说明：文件名也不能当成提取码。
+  const single = `${link}\nパスワード: \nMovie2024\nこのコンテンツをコピーした後、PikPak アプリを開いて、超高速のインスタント ブロードキャストをお楽しみください`;
+  expect(parseShares(single)).toEqual({ shares: share(""), issues: [] });
+  expect(parseShares(`${link}\nPassword:\nMovie2024\nAfter copying this content, open PikPak-App`).shares).toEqual(share(""));
 });
 
 test("Android 应用各语言的提取码写法都能识别，包括全角冒号与从右到左的文字", () => {
@@ -36,7 +41,7 @@ test("手写分享说明中的同义词与常见写法", () => {
   const variants = [
     `${link} 提取码：w2k9`, `${link} 提取碼：w2k9`, `${link} 提取密码：w2k9`, `${link} 识别码：w2k9`, `${link} 識別碼 w2k9`, `${link} 访问码：w2k9`,
     `${link} 分享码：w2k9`, `${link} 口令：w2k9`, `${link}\n【提取码：w2k9】`, `${link}（密码：w2k9）`, `${link} 密码：「w2k9」`, `${link} 提取码w2k9`,
-    `${link} 密码是 w2k9`, `${link} 提取码为w2k9。`, `${link} 密码：ｗ２ｋ９`, `${link}\n提取码：\nw2k9`, `${link} パスコード：w2k9`, `${link} パスワードは w2k9`,
+    `${link} 密码是 w2k9`, `${link} 提取码为w2k9。`, `${link} 密码：ｗ２ｋ９`, `${link}\n提取码：\nw2k9`, `${link}\n提取码：\nw2k9\n\n其他说明`, `资源.zip ${link}\nmovie.rar 密码：w2k9`, `${link} 7z-tools 提取码：w2k9`, `${link} パスコード：w2k9`, `${link} パスワードは w2k9`,
     `${link} ﾊﾟｽﾜｰﾄﾞ: w2k9`, `${link} 暗証番号：w2k9`, `${link} access code: w2k9`, `${link} Pass code = w2k9`, `${link} passcode:w2k9`, `${link} PWD: w2k9`,
     `${link} The password is w2k9.`, `${link} Extraction code: w2k9`, `${link} mot de passe : w2k9`, `${link} Passwort: w2k9`, `${link} Mật khẩu: w2k9`,
     `${link} Şifre: w2k9`, `${link} hasło: w2k9`, `${link} 암호: w2k9`, `${link} รหัสผ่าน: w2k9`,
