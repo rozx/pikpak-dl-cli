@@ -27,6 +27,9 @@ test("网页版日文模板漏填密码：识别为无码分享，不把下一�
   const single = `${link}\nパスワード: \nMovie2024\nこのコンテンツをコピーした後、PikPak アプリを開いて、超高速のインスタント ブロードキャストをお楽しみください`;
   expect(parseShares(single)).toEqual({ shares: share(""), issues: [] });
   expect(parseShares(`${link}\nPassword:\nMovie2024\nAfter copying this content, open PikPak-App`).shares).toEqual(share(""));
+  // 同理，冒号在行尾、下一行之后紧跟说明时无法区分码与文件名，按未提供提取码处理；码行后空一行即可识别。
+  expect(parseShares(`${link}\n提取码：\nw2k9\n需要的抓紧存`).shares).toEqual(share(""));
+  expect(parseShares(`${link}\n提取码：\nw2k9\n\n需要的抓紧存`).shares).toEqual(share("w2k9"));
 });
 
 test("Android 应用各语言的提取码写法都能识别，包括全角冒号与从右到左的文字", () => {
