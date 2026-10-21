@@ -102,7 +102,7 @@ https://mypikpak.com/s/synthetic-demo
 Password: demo
 ```
 
-The label in front of the pass code can be `password`, `pass code`, `提取码` or `密码`.
+Share text copied from any PikPak client works in every language it supports, and common synonyms such as `Pass code` or `Access code` are recognized too; see [Copying share text](docs/en/clipboard.md) for the details.
 
 The new task appears right away. It is then scanned, saved, downloaded and verified, and the files end up in a folder named after the share title inside your download folder. You can also press `a` to open the paste box, which shows in real time how many shares and pass codes it found:
 
