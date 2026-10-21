@@ -9,13 +9,16 @@ import { MAX_CONNECTIONS } from "../download/connections";
 import { MAX_ACTIVE_FILES } from "../runtime/active-files";
 import { formatBytes } from "./format";
 import type { ReleasePreview } from "../runtime/engine";
+import { t } from "../i18n";
+import { LANGUAGE_SETTINGS } from "../i18n/language";
 
 // 释放确认框的说明（add-task-controls 决策 5、7）：只删记录、只有已完成、只有未完成、两者都有。
 function releaseDetail(preview: Extract<ReleasePreview, { ok: true }>): string {
-  if (preview.copies === 0) return "云盘中已没有这些副本，只删除任务记录，本地文件保留。";
-  if (preview.unfinished === 0) return "将永久删除 PikPak 中的副本（不进回收站），本地文件保留，任务记录一并删除。";
-  if (preview.removed === 0) return "将永久删除 PikPak 中的副本，断点保留；继续时从分享重新转存，分享失效将无法完成。";
-  return "永久删除 PikPak 中的副本：已完成的删除任务记录，未完成的保留断点、继续时从分享重新转存。";
+  const text = t().dialogs;
+  if (preview.copies === 0) return text.releaseRecordsOnly;
+  if (preview.unfinished === 0) return text.releaseFinished;
+  if (preview.removed === 0) return text.releaseUnfinished;
+  return text.releaseMixed;
 }
 
 type Screen = { kind: "main" } | { kind: "detail"; fileId: string } | { kind: "settings" } | { kind: "account"; confirming: boolean } | { kind: "paste" }
@@ -62,39 +65,40 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
   };
   const run = async (command: Parameters<TuiController["command"]>[0]) => {
     const result = await controller.command(command);
-    if (!result.ok) controller.note({ icon: "✗", tone: "error", text: `操作失败：${explain(result.reason).reason}` });
+    if (!result.ok) controller.note({ icon: "✗", tone: "error", text: t().events.failed(explain(result.reason).reason) });
     return result;
   };
   const askCancel = (target: Row | undefined, back: Screen) => {
     if (!target) return;
     if (target.kind === "share") {
       const open = target.counts.total - target.counts.completed - target.counts.cancelled;
-      setScreen({ kind: "confirm", action: "cancel", id: target.share.id, title: `取消「${target.share.title ?? target.share.id}」中未完成的 ${open} 个文件？`, back });
-    } else if (target.file.state === "completed") controller.note({ icon: "!", tone: "warning", text: `${target.name} 已完成，无需取消` });
-    else setScreen({ kind: "confirm", action: "cancel", id: target.file.id, title: `取消 ${target.name}？`, back });
+      setScreen({ kind: "confirm", action: "cancel", id: target.share.id, title: t().dialogs.cancelShare(t().quote(target.share.title ?? target.share.id), open), back });
+    } else if (target.file.state === "completed") controller.note({ icon: "!", tone: "warning", text: t().dialogs.alreadyDone(target.name) });
+    else setScreen({ kind: "confirm", action: "cancel", id: target.file.id, title: t().dialogs.cancelFile(target.name), back });
   };
   // 手动释放云端副本（add-task-controls 决策 5）：没有合格副本时只说明原因，不打开确认框。
   const askRelease = (target: Row | undefined, back: Screen) => {
     if (!target) return;
     const id = target.kind === "share" ? target.share.id : target.file.id;
-    const name = target.kind === "share" ? `「${target.share.title ?? target.share.id}」` : target.name;
+    const name = target.kind === "share" ? t().quote(target.share.title ?? target.share.id) : target.name, text = t().dialogs;
     const preview = controller.releasePreview(id);
-    if (!preview.ok) { controller.note({ icon: "!", tone: "warning", text: `${name}：${explain(preview.reason).reason}` }); return; }
-    const title = preview.copies === 0 ? (target.kind === "share" ? `删除${name}中 ${preview.removed} 个已完成任务的记录？` : `删除 ${name} 的任务记录？`)
-      : target.kind === "share" ? `释放${name}中 ${preview.copies} 个云端副本（${formatBytes(preview.bytes)}）？` : `释放 ${name} 的云端副本（${formatBytes(preview.bytes)}）？`;
+    if (!preview.ok) { controller.note({ icon: "!", tone: "warning", text: t().labelled(name, explain(preview.reason).reason) }); return; }
+    const title = preview.copies === 0 ? (target.kind === "share" ? text.removeShareRecords(name, preview.removed) : text.removeFileRecord(name))
+      : target.kind === "share" ? text.releaseShare(name, preview.copies, formatBytes(preview.bytes)) : text.releaseFile(name, formatBytes(preview.bytes));
     setScreen({ kind: "confirm", action: "release", id, title, release: preview, back });
   };
   // 全部释放：只处理已完成的任务，未完成的任务不受影响。
   const askReleaseAll = () => {
     const preview = controller.releasePreview(null);
-    if (!preview.ok) { controller.note({ icon: "!", tone: "warning", text: `全部释放：${explain(preview.reason).reason}` }); return; }
-    const title = preview.copies ? `释放全部已完成任务的 ${preview.copies} 个云端副本（${formatBytes(preview.bytes)}）？` : `删除全部 ${preview.removed} 个已完成任务的记录？`;
+    const text = t().dialogs;
+    if (!preview.ok) { controller.note({ icon: "!", tone: "warning", text: t().labelled(text.releaseAllLabel, explain(preview.reason).reason) }); return; }
+    const title = preview.copies ? text.releaseAll(preview.copies, formatBytes(preview.bytes)) : text.removeAll(preview.removed);
     setScreen({ kind: "confirm", action: "releaseAll", id: "*", title, release: preview, back: { kind: "main" } });
   };
   const open = async (target: Row | undefined) => {
     if (!target) return;
     const result = await controller.openDirectory(target.kind === "share" ? { shareId: target.share.id } : { shareId: target.shareId, fileId: target.file.id });
-    if (!result.ok) controller.note({ icon: "✗", tone: "error", text: `无法打开目录：${explain(result.reason).reason}` });
+    if (!result.ok) controller.note({ icon: "✗", tone: "error", text: t().dialogs.openFailed(explain(result.reason).reason) });
   };
 
   const quit = () => { setScreen({ kind: "main" }); controller.stop(); };
@@ -163,8 +167,8 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
 
   const submitPaste = async () => {
     const result = await run({ kind: "submitText", text: draft });
-    if (!result.ok) { setPasteMessage(`未能接收：${explain(result.reason).reason}`); return; }
-    if (!result.ids.length) { setPasteMessage(result.issues.length ? "配对不明确，未接收任何分享" : "未识别到分享链接，未接收任何分享"); return; }
+    if (!result.ok) { setPasteMessage(t().paste.rejected(explain(result.reason).reason)); return; }
+    if (!result.ids.length) { setPasteMessage(result.issues.length ? t().paste.ambiguousNone : t().paste.noLinkNone); return; }
     setScreen({ kind: "main" });
   };
   usePaste(text => { setDraft(value => value + text.replace(/\r\n?/g, "\n")); setPasteMessage(null); }, { isActive: screen.kind === "paste" });
@@ -201,6 +205,10 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
     } else if (setting.selected === 4 && (key.leftArrow || key.rightArrow)) {
       const count = snapshot.activeFiles.configured + (key.rightArrow ? 1 : -1);
       if (count >= 1 && count <= MAX_ACTIVE_FILES) void run({ kind: "setActiveFiles", count });
+    } else if (setting.selected === 5 && (key.leftArrow || key.rightArrow)) {
+      // 语言在跟随系统、简体中文、English、日本語之间循环。
+      const index = LANGUAGE_SETTINGS.indexOf(snapshot.language), step = key.rightArrow ? 1 : LANGUAGE_SETTINGS.length - 1;
+      void run({ kind: "setLanguage", language: LANGUAGE_SETTINGS[(index + step) % LANGUAGE_SETTINGS.length]! });
     }
   }, { isActive: screen.kind === "settings" });
 
@@ -215,7 +223,7 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
   }, { isActive: screen.kind === "account" && !snapshot.stopping });
 
   if (size.columns < MIN_COLUMNS || size.rows < MIN_ROWS) {
-    return <Text {...theme.paint("warning")}>窗口太小（{size.columns}×{size.rows}），请放大到至少 {MIN_COLUMNS}×{MIN_ROWS}</Text>;
+    return <Text {...theme.paint("warning")}>{t().main.tooSmall(size.columns, size.rows, MIN_COLUMNS, MIN_ROWS)}</Text>;
   }
   if (screen.kind === "detail" && detailFile) {
     const share = snapshot.shares.find(item => item.id === detailFile.shareId);
@@ -224,21 +232,22 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
   }
   if (screen.kind === "account") return <AccountPage account={snapshot.account} quota={snapshot.quota} confirming={screen.confirming} size={size} theme={theme} />;
   if (screen.kind === "settings") {
-    return <SettingsPage account={snapshot.account} outputRoot={snapshot.outputRoot} clipboardOn={snapshot.clipboard !== "off"} connections={snapshot.connections} activeFiles={snapshot.activeFiles} selected={setting.selected} editing={setting.editing}
+    return <SettingsPage account={snapshot.account} outputRoot={snapshot.outputRoot} clipboardOn={snapshot.clipboard !== "off"} connections={snapshot.connections} activeFiles={snapshot.activeFiles} language={snapshot.language} selected={setting.selected} editing={setting.editing}
       draft={draft} error={setting.error} size={size} theme={theme} />;
   }
-  const keys: Array<[string, string]> = screen.kind === "confirm" ? [["y", "确认"], ["n", "返回"]]
-    : screen.kind === "quit" ? [["y", "退出"], ["n", "返回"]]
-    : screen.kind === "paste" ? [["Enter", "提交"], ["Esc", "取消"]]
+  const key = t().keys, dialog = t().dialogs;
+  const keys: Array<[string, string]> = screen.kind === "confirm" ? [["y", key.confirm], ["n", key.back]]
+    : screen.kind === "quit" ? [["y", key.quit], ["n", key.back]]
+    : screen.kind === "paste" ? [["Enter", key.submit], ["Esc", key.cancel]]
     // 单项与全部合写，与“x/X 释放/全部”一致；有暂停时 P 是全部开始，写明“全部开始”。
-    : [["Enter", "详情"], ["r", "重试"], ["c", "取消"], ["p/P", `${row && selectedPaused(row) ? "继续" : "暂停"}/${anyPaused ? "全部开始" : "全部"}`],
-      ["x/X", "释放/全部"], ["o", "目录"], ["a", "粘贴"], ["s", "设置"], ["q", "退出"]];
+    : [["Enter", key.details], ["r", key.retry], ["c", key.cancel], ["p/P", key.pauseAll(!!row && selectedPaused(row), anyPaused)],
+      ["x/X", key.releaseAll], ["o", key.folder], ["a", key.paste], ["s", key.settings], ["q", key.quit]];
   const overlay = screen.kind === "confirm" && screen.release
-    ? <ConfirmDialog heading={screen.release.copies ? "释放云端副本" : "删除任务记录"} title={screen.title} confirm={screen.release.copies ? "确认释放" : "确认删除"}
-      detail={screen.action === "releaseAll" && screen.release.copies ? "将永久删除 PikPak 中的这些副本（不进回收站），本地文件保留，任务记录一并删除；未完成的任务不受影响。" : releaseDetail(screen.release)} theme={theme} />
+    ? <ConfirmDialog heading={screen.release.copies ? dialog.releaseHeading : dialog.removeHeading} title={screen.title} confirm={screen.release.copies ? dialog.releaseConfirm : dialog.removeConfirm}
+      detail={screen.action === "releaseAll" && screen.release.copies ? dialog.releaseAllDetail : releaseDetail(screen.release)} theme={theme} />
     : screen.kind === "confirm"
-    ? <ConfirmDialog heading="取消任务" title={screen.title} detail="本地文件、断点和云端副本都会保留，之后可用 r 恢复。" confirm="确认取消" theme={theme} />
-    : screen.kind === "quit" ? <ConfirmDialog heading="退出程序" title="停止下载并退出？" detail="当前下载会在安全点停止并保存断点，下次启动继续。" confirm="停止并退出" theme={theme} />
+    ? <ConfirmDialog heading={dialog.cancelHeading} title={screen.title} detail={dialog.cancelDetail} confirm={dialog.cancelConfirm} theme={theme} />
+    : screen.kind === "quit" ? <ConfirmDialog heading={dialog.quitHeading} title={dialog.quitTitle} detail={dialog.quitDetail} confirm={dialog.quitConfirm} theme={theme} />
     : screen.kind === "paste" ? <PasteBox draft={draft} preview={controller.preview(draft)} outputRoot={snapshot.outputRoot} message={pasteMessage} theme={theme} width={size.columns - 4} />
     : undefined;
   return <MainPanel snapshot={snapshot} rows={rows} selected={selected} offset={effectiveOffset} size={size} theme={theme} overlay={overlay} overlayLines={overlayLines} keys={keys} />;

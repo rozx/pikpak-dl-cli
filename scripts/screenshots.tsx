@@ -1,5 +1,5 @@
 // README 截图：用模拟数据渲染全屏界面，把带颜色的终端帧转换为 SVG，写入 docs/images/。不读写任务库，也不访问网络。
-// 用法：bun scripts/screenshots.tsx
+// 用法：bun scripts/screenshots.tsx [zh-CN|en|ja …]，不带参数时生成全部语言；中文写到 docs/images/，英文与日文写到 docs/images/<语言>/。
 // 截图中的分享、文件、账号与链接都是虚构的；修改界面后重新运行即可更新截图。
 import { EventEmitter } from "node:events";
 import { mkdir } from "node:fs/promises";
@@ -17,21 +17,48 @@ const { LOGO, SUBTITLE } = await import("../src/tui/brand");
 const { SPINNER } = await import("../src/tui/parts");
 const SPINNER_FRAMES = new RegExp(`[${SPINNER}]`, "g");
 const { FakeController, file, keys, share } = await import("../tests/fixtures/tui");
+const { locale, setLocale, t } = await import("../src/i18n");
+const { LOCALES } = await import("../src/i18n/locale");
+type Locale = import("../src/i18n/locale").Locale;
 type TuiSnapshot = import("../src/tui/controller").TuiSnapshot;
 type StartupDeps = import("../src/tui/startup").StartupDeps;
 
-const outDir = resolve(import.meta.dir, "..", "docs", "images");
+const imagesDir = resolve(import.meta.dir, "..", "docs", "images");
 const theme = createTheme({});
 
 // ---------- 模拟数据 ----------
 
 const MB = 1048576n, GB = 1024n * MB;
-const ROOT = "D:\\Downloads\\PikPak", MEDIA = "E:\\Media\\纪录片";
+const ROOT = "D:\\Downloads\\PikPak";
 const at = (time: string) => Date.parse(`2026-10-15T${time}`);
+// 每种语言的虚构数据：分享与文件名称、账号名称、粘贴框中的示例文本与截图说明。
+type Demo = { media: string; movies: string; course: string; nature: string; lecture: (index: string) => string; ocean: string; forest: string; user: string; paste: string;
+  released: string; labels: Record<string, string> };
+// 截图里不出现可解析的分享链接与提取码，即使是虚构的（AGENTS.md）：链接与提取码用圆点遮蔽。
+const demos: Record<Locale, Demo> = {
+  "zh-CN": { media: "E:\\Media\\纪录片", movies: "Blender 开源电影合集", course: "公开课：线性代数", nature: "自然纪录片 4K", lecture: index => `第 ${index} 讲.mp4`,
+    ocean: "第 01 集 · 海洋的深处.mp4", forest: "第 02 集 · 森林的四季.mp4", user: "演示用户", paste: "Blender 开源电影合集\n链接：https://mypikpak.com/s/••••••••••••\n提取码：••••",
+    released: "已释放「公开课：线性代数」的 12 个云端副本，腾出 3.8 GB",
+    labels: { main: "主面板：按下载目录分组的分享与文件、进度和事件", login: "首次启动：在浏览器中完成 PikPak 官方授权", paste: "按 a 粘贴分享文本，实时识别链接与提取码",
+      detail: "文件详情：原因、建议、断点与云端副本", release: "按 x 释放云端副本前的确认", settings: "设置：下载目录、剪贴板监听、连接数、同时下载文件数与语言" } },
+  en: { media: "E:\\Media\\Documentaries", movies: "Blender Open Movies", course: "Open Course - Linear Algebra", nature: "Nature Documentary 4K", lecture: index => `Lecture ${index}.mp4`,
+    ocean: "Episode 01 · Into the Deep.mp4", forest: "Episode 02 · Four Seasons of the Forest.mp4", user: "Demo User", paste: "Blender Open Movies\nLink: https://mypikpak.com/s/••••••••••••\nPassword: ••••",
+    released: "Released 12 cloud copies of “Open Course - Linear Algebra”, freeing 3.8 GB",
+    labels: { main: "Main panel: shares and files grouped by download folder, with progress and events", login: "First start: authorize on the official PikPak page in your browser",
+      paste: "Press a to paste share text; links and pass codes are recognized as you type", detail: "File details: reason, advice, progress and cloud copy",
+      release: "Confirmation before releasing a cloud copy with x", settings: "Settings: download folder, clipboard watch, connections, concurrent files and language" } },
+  ja: { media: "E:\\Media\\ドキュメンタリー", movies: "Blender オープンムービー集", course: "公開講座：線形代数", nature: "自然ドキュメンタリー 4K", lecture: index => `第 ${index} 回.mp4`,
+    ocean: "第 01 話 · 深海の世界.mp4", forest: "第 02 話 · 森の四季.mp4", user: "デモユーザー", paste: "Blender オープンムービー集\nリンク：https://mypikpak.com/s/••••••••••••\nPassword: ••••",
+    released: "「公開講座：線形代数」のクラウドのコピー 12 件を解放し、3.8 GB を空けました",
+    labels: { main: "メイン画面：ダウンロード先ごとの共有とファイル、進捗、イベント", login: "初回起動：ブラウザで PikPak の公式認可を完了", paste: "a で共有テキストを貼り付け、リンクとパスコードをその場で認識",
+      detail: "ファイルの詳細：理由、対処、進捗、クラウドのコピー", release: "x でクラウドのコピーを解放する前の確認", settings: "設定：ダウンロード先、クリップボード監視、接続数、同時ダウンロード数、言語" } },
+};
+let demo = demos["zh-CN"];
 function showcase(): TuiSnapshot {
-  const movies = share("s_movies", "Blender 开源电影合集", "partial", { outputRoot: ROOT });
-  const course = share("s_course", "公开课：线性代数", "completed", { outputRoot: ROOT });
-  const nature = share("s_nature", "自然纪录片 4K", "partial", { outputRoot: MEDIA });
+  const MEDIA = demo.media;
+  const movies = share("s_movies", demo.movies, "partial", { outputRoot: ROOT });
+  const course = share("s_course", demo.course, "completed", { outputRoot: ROOT });
+  const nature = share("s_nature", demo.nature, "partial", { outputRoot: MEDIA });
   return {
     shares: [movies, course, nature],
     files: {
@@ -43,10 +70,10 @@ function showcase(): TuiSnapshot {
         file("f_cosmos", "s_movies", "Cosmos Laundromat (2015).mkv", "ready", 1946n * MB),
       ],
       s_course: Array.from({ length: 12 }, (_, index) =>
-        file(`f_la${index}`, "s_course", `第 ${String(index + 1).padStart(2, "0")} 讲.mp4`, "completed", 320n * MB)),
+        file(`f_la${index}`, "s_course", demo.lecture(String(index + 1).padStart(2, "0")), "completed", 320n * MB)),
       s_nature: [
-        file("f_ocean", "s_nature", "第 01 集 · 海洋的深处.mp4", "failed", 6871947674n, { lastError: "network_failure", retries: 3n, checkpoint: 3407n * MB, copyState: "retained" }),
-        file("f_forest", "s_nature", "第 02 集 · 森林的四季.mp4", "waiting_space", 7194070220n),
+        file("f_ocean", "s_nature", demo.ocean, "failed", 6871947674n, { lastError: "network_failure", retries: 3n, checkpoint: 3407n * MB, copyState: "retained" }),
+        file("f_forest", "s_nature", demo.forest, "waiting_space", 7194070220n),
       ],
     },
     quota: { usage: 5734n * MB, limit: 10n * 1024n * GB }, localFree: 1843n * GB, clipboard: "on", userPaused: false, systemPause: null,
@@ -55,13 +82,15 @@ function showcase(): TuiSnapshot {
       f_tears: { bytes: 516n * MB, size: 2458n * MB, rate: 5.1 * 1048576, eta: 381 },
     },
     events: [
-      { at: at("21:04:12"), icon: "⟳", tone: "scan", text: "「Blender 开源电影合集」扫描完成：5 个文件" },
-      { at: at("21:06:47"), icon: "✓", tone: "done", text: "Big Buck Bunny (2008).mkv 校验通过，已完成" },
-      { at: at("21:07:03"), icon: "♻", tone: "done", text: "已释放「公开课：线性代数」的 12 个云端副本，腾出 3.8 GB" },
+      { at: at("21:04:12"), icon: "⟳", tone: "scan", text: t().events.scanned(t().quote(demo.movies), 5) },
+      { at: at("21:06:47"), icon: "✓", tone: "done", text: t().events.completed("Big Buck Bunny (2008).mkv") },
+      { at: at("21:07:03"), icon: "♻", tone: "done", text: demo.released },
     ],
     outputRoot: ROOT, stopping: false, connections: 4, activeFiles: { configured: 3, effective: 3, tier: "paid" }, localMissing: new Set<string>(), releasing: new Set<string>(),
-    account: { id: "demo-account", name: "演示用户", email: "demo@example.com", scopes: ["account", "files:manage", "share", "cloud_download"],
+    account: { id: "demo-account", name: demo.user, email: "demo@example.com", scopes: ["account", "files:manage", "share", "cloud_download"],
       membership: { tier: "paid", type: "platinum", expire: Date.parse("2027-06-30T12:00:00") } },
+    // 写明语言而不是跟随系统：截图不随生成机器的系统语言变化。
+    language: locale(),
   };
 }
 class ShowcaseController extends FakeController {
@@ -69,12 +98,10 @@ class ShowcaseController extends FakeController {
     super(showcase());
     this.release = { ok: true, copies: 1, bytes: 885n * MB, unfinished: 0, removed: 1 };
   }
-  override targetPath = (fileId: string): string | null => fileId === "f_ocean" ? `${MEDIA}\\自然纪录片 4K\\第 01 集 · 海洋的深处.mp4` : null;
+  override targetPath = (fileId: string): string | null => fileId === "f_ocean" ? `${demo.media}\\${demo.nature}\\${demo.ocean}` : null;
   // 粘贴框显示的是遮蔽后的文本，解析不出分享；预览结果按一段完整的分享文本给出。
   override preview = () => ({ shares: 1, paired: 1, issues: [] });
 }
-// 截图里不出现可解析的分享链接与提取码，即使是虚构的（AGENTS.md）：链接与提取码用圆点遮蔽。
-const PASTE = "Blender 开源电影合集\n链接：https://mypikpak.com/s/••••••••••••\n提取码：••••";
 
 // ---------- 渲染为终端帧 ----------
 
@@ -269,15 +296,17 @@ function logoSvg(frame: string): string {
 
 // ---------- 各个画面 ----------
 
+// 标志或说明较宽者再加留白；说明随语言变化。
+const logoColumns = () => Math.max(LOGO[0]!.length + 8, Bun.stringWidth(t().tagline) + 4);
 function Logo() {
   return (
-    <Box flexDirection="column" alignItems="center" width={LOGO[0]!.length + 8}>
+    <Box flexDirection="column" alignItems="center" width={logoColumns()}>
       {LOGO.map((line, index) => (
         <Text key={index}>{(line.match(/█+|[^█]+/g) ?? []).map((run, at) => <Text key={at} {...theme.paint(run.startsWith("█") ? "active" : "transfer")}>{run}</Text>)}</Text>
       ))}
       <Text {...theme.paint("strong")} bold>{SUBTITLE}</Text>
       <Text> </Text>
-      <Text {...theme.paint("muted")}>复制分享文本 → 转存到 PikPak 云盘 → 下载到本地</Text>
+      <Text {...theme.paint("muted")}>{t().tagline}</Text>
     </Box>
   );
 }
@@ -288,24 +317,29 @@ const startupDeps = (account: string | null, root: string | null): StartupDeps =
 });
 const main = (size: Size) => <TuiApp controller={new ShowcaseController()} theme={theme} size={size} />;
 const MAIN: Size = { columns: 112, rows: 21 };
-const shots: Array<{ name: string; label: string; size: Size; tree: (size: Size) => ReactNode; inputs?: string[] }> = [
-  { name: "main", label: "主面板：按下载目录分组的分享与文件、进度和事件", size: MAIN, tree: main, inputs: [keys.down] },
-  { name: "login", label: "首次启动：在浏览器中完成 PikPak 官方授权", size: { columns: 112, rows: 24 },
-    tree: size => <StartupApp deps={startupDeps(null, null)} theme={theme} size={size} splashMs={0} /> },
-  { name: "paste", label: "按 a 粘贴分享文本，实时识别链接与提取码", size: MAIN, tree: main, inputs: ["a", `\x1b[200~${PASTE}\x1b[201~`] },
-  { name: "detail", label: "文件详情：原因、建议、断点与云端副本", size: { columns: 112, rows: 16 }, tree: main,
-    inputs: [...Array<string>(7).fill(keys.down), keys.enter] },
-  { name: "release", label: "按 x 释放云端副本前的确认", size: MAIN, tree: main, inputs: ["x"] },
-  { name: "settings", label: "设置：下载目录、剪贴板监听、连接数与同时下载文件数", size: { columns: 112, rows: 23 }, tree: main, inputs: ["s"] },
+const shots: Array<{ name: string; size: Size; tree: (size: Size) => ReactNode; inputs?: () => string[] }> = [
+  { name: "main", size: MAIN, tree: main, inputs: () => [keys.down] },
+  { name: "login", size: { columns: 112, rows: 24 }, tree: size => <StartupApp deps={startupDeps(null, null)} theme={theme} size={size} splashMs={0} /> },
+  { name: "paste", size: MAIN, tree: main, inputs: () => ["a", `\x1b[200~${demo.paste}\x1b[201~`] },
+  { name: "detail", size: { columns: 112, rows: 16 }, tree: main, inputs: () => [...Array<string>(7).fill(keys.down), keys.enter] },
+  { name: "release", size: MAIN, tree: main, inputs: () => ["x"] },
+  // 设置页六项之间留空行需要至少 28 行。
+  { name: "settings", size: { columns: 112, rows: 29 }, tree: main, inputs: () => ["s"] },
 ];
 
-await mkdir(outDir, { recursive: true });
-const logoFrame = await capture(() => <Logo />, { columns: LOGO[0]!.length + 8, rows: 10 });
-await Bun.write(join(outDir, "logo.svg"), logoSvg(logoFrame));
-console.log("docs/images/logo.svg");
-for (const shot of shots) {
-  const frame = await capture(shot.tree, shot.size, shot.inputs);
-  await Bun.write(join(outDir, `${shot.name}.svg`), windowSvg(frame, shot.size, shot.label));
-  console.log(`docs/images/${shot.name}.svg`);
+const requested = process.argv.slice(2);
+for (const target of requested) if (!(LOCALES as readonly string[]).includes(target)) throw Error(`不支持的语言：${target}`);
+for (const target of (requested.length ? requested : LOCALES) as Locale[]) {
+  setLocale(target); demo = demos[target];
+  const outDir = target === "zh-CN" ? imagesDir : join(imagesDir, target), shown = target === "zh-CN" ? "docs/images" : `docs/images/${target}`;
+  await mkdir(outDir, { recursive: true });
+  const logoFrame = await capture(() => <Logo />, { columns: logoColumns(), rows: 10 });
+  await Bun.write(join(outDir, "logo.svg"), logoSvg(logoFrame));
+  console.log(`${shown}/logo.svg`);
+  for (const shot of shots) {
+    const frame = await capture(shot.tree, shot.size, shot.inputs?.());
+    await Bun.write(join(outDir, `${shot.name}.svg`), windowSvg(frame, shot.size, demo.labels[shot.name]!));
+    console.log(`${shown}/${shot.name}.svg`);
+  }
 }
 process.exit(0);

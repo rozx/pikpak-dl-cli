@@ -15,9 +15,8 @@ import { Engine, type RuntimeEvent } from "./engine";
 import { RuntimeSession, type SessionEngine } from "./session";
 import type { LocalFileSystem } from "../platform/files";
 import { AccountTier } from "../pikpak/tier";
+import { t } from "../i18n";
 
-const labels: Record<string, string> = { scanning: "正在扫描", scanned: "扫描完成", scan_incomplete: "扫描未完整完成", scan_waiting: "扫描等待处理",
-  saving: "正在准备转存", downloading: "正在下载", completed: "已完成", waiting_space: "等待云端空间", paused: "执行已暂停", attention: "需要核对", file_waiting: "文件等待处理" };
 // 纯文本进度：同一文件只在跨过 10% 整数倍、或距上次输出满 30 秒且百分比变化时追加一行；开始下载已有单独提示。
 export function progressPrinter(now: () => number = Date.now): (event: RuntimeEvent) => string | null {
   const last = new Map<string, { decade: number; percent: number; at: number }>();
@@ -28,13 +27,14 @@ export function progressPrinter(now: () => number = Date.now): (event: RuntimeEv
     const previous = last.get(event.id) ?? { decade: 0, percent, at: now() };
     const print = decade > previous.decade || (percent !== previous.percent && now() - previous.at >= 30_000);
     last.set(event.id, print ? { decade, percent, at: now() } : previous);
-    return print ? `下载进度 ${event.id}: ${percent}%` : null;
+    return print ? t().watch.progress(event.id, percent) : null;
   };
 }
 const printProgress = progressPrinter();
 export function printEvent(event: RuntimeEvent): void {
   if (event.type === "progress") { const line = printProgress(event); if (line) console.log(line); return; }
-  console.log(`${labels[event.type] ?? event.type}${event.id ? ` ${event.id}` : ""}${event.count !== undefined ? `，文件版本数 ${event.count}` : ""}${event.reason ? `，原因：${event.reason}` : ""}`);
+  const text = t().watch;
+  console.log(`${text.labels[event.type] ?? event.type}${event.id ? ` ${event.id}` : ""}${event.count !== undefined ? text.versions(event.count) : ""}${event.reason ? text.reason(event.reason) : ""}`);
 }
 export async function watch(store: Store, output: string | null, signal: AbortSignal): Promise<void> {
   const accountId = store.config("active_account"); if (!accountId) throw new AppError("login_required");
@@ -82,16 +82,16 @@ export async function prepareRuntime(store: Store, accountId: string, root: stri
 
 // 会话自身的事件转成纯文本提示；执行器事件由创建执行器时传入的 printEvent 输出。
 export function sessionMessage(event: RuntimeEvent): string | null {
+  const text = t().watch;
   switch (event.type) {
-    case "started": return event.reason === "clipboard_off" ? "执行已启动；剪贴板监听已在设置中关闭。Ctrl+C 停止。"
-      : "监听已启动。复制完整分享文本即可接收任务；Ctrl+C 停止。确认接收前请勿快速覆盖剪贴板。";
-    case "received": return `已接收 ${event.id}`;
-    case "received_cancelled": return `任务 ${event.id} 已取消；retry 才会恢复。`;
-    case "intake_issues": return "部分分享文本格式不支持或配对不明确，请分别复制完整文本。";
-    case "intake_failed": return "部分输入未确认接收：资料或任务保存失败，请解决后重新复制。";
-    case "clipboard_unavailable": return "剪贴板暂时不可读，正在退避重试；已有任务保留。";
-    case "clipboard_recovered": return "剪贴板监听已恢复。";
-    case "stopped": return "监听已停止，未完成任务和可恢复进度已保留。使用 status 查看，retry 重试，cancel 停止调度。";
+    case "started": return event.reason === "clipboard_off" ? text.startedClipboardOff : text.started;
+    case "received": return text.received(event.id ?? "");
+    case "received_cancelled": return text.receivedCancelled(event.id ?? "");
+    case "intake_issues": return text.intakeIssues;
+    case "intake_failed": return text.intakeFailed;
+    case "clipboard_unavailable": return text.clipboardUnavailable;
+    case "clipboard_recovered": return text.clipboardRecovered;
+    case "stopped": return text.stopped;
     default: return null;
   }
 }

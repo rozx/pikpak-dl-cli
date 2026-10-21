@@ -9,6 +9,7 @@ import { about } from "../src/about";
 import { LOGO, SUBTITLE } from "../src/tui/brand";
 import type { Size } from "../src/tui/main-panel";
 import { rejection } from "./fixtures/rejection";
+import { chineseEnv } from "./fixtures/language";
 
 const mounted: Array<() => void> = [];
 afterEach(() => { for (const unmount of mounted.splice(0)) unmount(); });
@@ -96,7 +97,7 @@ test("取消浏览器授权后本地回调端口立即释放", async () => {
 });
 
 test("不带参数且输出被重定向时打印纯文本帮助，不含控制序列", async () => {
-  const child = Bun.spawn([process.execPath, "src/cli.ts"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, "src/cli.ts"], { env: chineseEnv(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   child.stdin.end();
   const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
   expect(code).toBe(0); expect(output).toContain("在交互终端中打开全屏界面"); expect(output).toContain("watch [--output <目录>]");

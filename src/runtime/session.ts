@@ -9,12 +9,14 @@ import { pollClipboard, type Clipboard } from "../intake/clipboard";
 import type { Engine, ReleasePreview, RuntimeEvent } from "./engine";
 import { saveConnections } from "../download/connections";
 import { saveActiveFiles } from "./active-files";
+import { saveLanguage } from "../i18n/language";
 
 export type SessionCommand =
   | { kind: "retry"; id: string } | { kind: "cancel"; id: string }
   | { kind: "pauseQueue" } | { kind: "resumeQueue" }
   | { kind: "submitText"; text: string } | { kind: "setOutputRoot"; path: string }
   | { kind: "setClipboardWatch"; enabled: boolean } | { kind: "setDownloadConnections"; count: number } | { kind: "setActiveFiles"; count: number }
+  | { kind: "setLanguage"; language: string }
   | { kind: "pauseTask"; id: string } | { kind: "resumeTask"; id: string } | { kind: "startAll" } | { kind: "releaseCopy"; id: string } | { kind: "releaseAll" };
 export type CommandResult = { ok: true; ids: string[]; issues: string[] } | { ok: false; reason: string };
 // stopActive / isPooled 对应下载池（add-concurrent-file-downloads）；只有串行执行器的测试替身可以不提供。
@@ -162,6 +164,8 @@ export class RuntimeSession {
         count = started.copies; if (!started.copies) records = started.removed;
       } else if (command.kind === "setDownloadConnections") saveConnections(this.store, command.count);
       else if (command.kind === "setActiveFiles") saveActiveFiles(this.store, command.count);
+      // 先保存并切换语言，再发出命令事件，事件区的确认文字已经是新语言（add-multilingual-ui 决策 3）。
+      else if (command.kind === "setLanguage") saveLanguage(this.store, command.language);
       else if (command.kind === "setClipboardWatch") {
         this.store.setConfig("clipboard_watch", command.enabled ? "1" : "0");
         if (!command.enabled) await this.stopIntake(); else if (this.running) this.startIntake();

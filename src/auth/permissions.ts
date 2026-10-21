@@ -1,11 +1,12 @@
+import { t } from "../i18n";
+
 // 授权范围（improve-account-login 决策 1、2）：PikPak 授权页让用户逐项勾选权限，登录后核对是否齐全。
 export type Permission = { scope: string; label: string; use: string; required: boolean };
-export const PERMISSIONS: readonly Permission[] = [
-  { scope: "account", label: "账号信息", use: "读取身份、会员与容量", required: true },
-  { scope: "files:manage", label: "管理文件", use: "转存、下载与释放云端副本", required: true },
-  { scope: "share", label: "分享", use: "读取与转存分享", required: true },
-  { scope: "cloud_download", label: "云下载", use: "本工具暂不使用", required: false },
-];
+type Known = "account" | "files:manage" | "share" | "cloud_download";
+// 名称与用途按当前语言读取（add-multilingual-ui 决策 5），调用方照常读 label 与 use。
+const known = (scope: Known, required: boolean): Permission => ({ scope, required,
+  get label() { return t().permissions[scope].label; }, get use() { return t().permissions[scope].use; } });
+export const PERMISSIONS: readonly Permission[] = [known("account", true), known("files:manage", true), known("share", true), known("cloud_download", false)];
 // 登录基础范围不单独显示。
 const BASIC = new Set(["openid", "profile", "email", "offline_access"]);
 
@@ -31,9 +32,9 @@ export function grantedScopes(tokens: { accessToken: string; scope?: string[] })
 // 实测（2026-10-15，见 design Evidence）：服务端返回的范围准确反映授权页的勾选结果（漏勾“管理文件”时范围中就没有 files:manage），
 // 只读或针对不存在对象的请求都探测不出缺少的权限，所以以范围为准。
 // 但也出现过全部勾选后范围一项应用权限都没有的情况；这时它不能说明勾选结果，按未知处理。
-const known = new Set(PERMISSIONS.map(permission => permission.scope));
+const knownScopes = new Set(PERMISSIONS.map(permission => permission.scope));
 export const informativeScopes = (scopes: readonly string[] | null): readonly string[] | null =>
-  scopes?.some(scope => known.has(scope)) ? scopes : null;
+  scopes?.some(scope => knownScopes.has(scope)) ? scopes : null;
 // 授权范围未知时不判定缺少。
 export function missingPermissions(scopes: readonly string[] | null): Permission[] {
   const granted = informativeScopes(scopes);
@@ -47,7 +48,7 @@ export type PermissionRow = Permission & { state: PermissionState };
 export function permissionRows(scopes: readonly string[] | null): PermissionRow[] {
   const granted = informativeScopes(scopes);
   const rows: PermissionRow[] = PERMISSIONS.map(permission => ({ ...permission, state: !granted ? "unknown" : granted.includes(permission.scope) ? "granted" : "missing" }));
-  for (const scope of scopes ?? []) if (!known.has(scope) && !BASIC.has(scope)) rows.push({ scope, label: scope, use: "其他权限", required: false, state: "granted" });
+  for (const scope of scopes ?? []) if (!knownScopes.has(scope) && !BASIC.has(scope)) rows.push({ scope, label: scope, use: t().permissions.other, required: false, state: "granted" });
   return rows;
 }
-export const permissionNames = (permissions: readonly Permission[]) => permissions.map(permission => permission.label).join("、");
+export const permissionNames = (permissions: readonly Permission[]) => t().list(permissions.map(permission => permission.label));

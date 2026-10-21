@@ -16,6 +16,7 @@ import { writableDirectory } from "../runtime/session";
 import { LiveController } from "./live";
 import { StartupApp, type StartupDeps } from "./startup";
 import { guardTerminal } from "./terminal";
+import { t } from "../i18n";
 
 // 全屏界面入口：返回退出码。持有执行锁直到退出；拿不到锁时只显示已有实例的提示，不写任务库。
 export async function runTui(): Promise<number> {
@@ -104,7 +105,7 @@ export async function runTui(): Promise<number> {
   (live as LiveController | null)?.dispose();
   guard.restore(); guard.dispose();
   const summary = (live as LiveController | null)?.summary();
-  if (summary) process.stdout.write(`${code === 130 ? "已立即退出。" : "已停止，进度已保存。"}${summary}\n`);
+  if (summary) process.stdout.write(`${code === 130 ? t().exit.immediate : t().exit.stopped}${summary}\n`);
   // 立即退出时不等待仍在进行的网络操作；正常退出时会话已结束，可以安全关闭资源。
   if (code !== 130) { await filesystem.close(); store?.close(); lock?.release(); }
   return code;

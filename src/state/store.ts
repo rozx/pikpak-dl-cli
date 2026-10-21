@@ -28,7 +28,7 @@ export type ReleaseTarget = { copy: CopyRecord; fileIds: string[]; completed: bo
 export type Delivery = { fileId: string; tempPath: string; targetPath: string; checkpoint: bigint; prefixSha256: string | null;
   publishAttempt: bigint; volume: string | null; identity: string | null; sha256: string | null; verification: string | null; completedAt: bigint | null;
   ranges: RangeCheckpoint | null };
-export type ConfigKey = "active_account" | "output_root" | "queue_paused" | "clipboard_watch" | "download_connections" | "max_active_files" | "account_tier";
+export type ConfigKey = "active_account" | "output_root" | "queue_paused" | "clipboard_watch" | "download_connections" | "max_active_files" | "account_tier" | "language";
 export type ShareSummary = ReturnType<typeof aggregateCounts> & { reason: string | null };
 export type ShareView = { id: string; title: string | null; outputRoot: string; scanStatus: Share["scanStatus"]; cancelled: boolean;
   lastError: string | null; summary: ShareSummary; paused: boolean };

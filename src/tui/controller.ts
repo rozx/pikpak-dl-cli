@@ -5,6 +5,7 @@ import type { ReleasePreview } from "../runtime/engine";
 import { parseShares } from "../intake/parse";
 import type { LogLine } from "./view-model";
 import type { Membership, Tier } from "../pikpak/tier";
+import type { LanguageSetting } from "../i18n/language";
 
 export type Progress = { bytes: bigint; size: bigint; rate: number | null; eta: number | null };
 export type LogEntry = LogLine & { at: number };
@@ -21,6 +22,8 @@ export type TuiSnapshot = {
   releasing: ReadonlySet<string>;
   // 账号资料；尚未读取时为 null。
   account: AccountView | null;
+  // 界面语言设置；当前语言由 i18n 的 locale() 给出，切换后快照随之变化，界面重绘（add-multilingual-ui 决策 3）。
+  language: LanguageSetting;
 };
 // 账号页的资料（improve-account-login 决策 5）：读不到的部分为 null。
 export type AccountView = { id: string; name: string | null; email: string | null; scopes: string[] | null; membership: Membership | null };

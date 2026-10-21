@@ -12,6 +12,8 @@ import { openDirectory } from "./open-directory";
 import { configuredConnections } from "../download/connections";
 import { configuredActiveFiles } from "../runtime/active-files";
 import { tierCap, type Tier } from "../pikpak/tier";
+import { configuredLanguage } from "../i18n/language";
+import { t } from "../i18n";
 
 export type LiveOptions = {
   store: Store; accountId: string; session: Pick<RuntimeSession, "subscribe" | "command"> & Partial<Pick<RuntimeSession, "releasable" | "releasing">>;
@@ -98,7 +100,7 @@ export class LiveController implements TuiController {
   summary(): string {
     let unfinished = 0;
     try { for (const files of Object.values(this.build().files)) unfinished += files.filter(file => file.state !== "completed" && !file.cancelled).length; } catch { /* 任务库已关闭时只报告完成数。 */ }
-    return `本次完成 ${this.completed} 个文件${unfinished ? `；还有 ${unfinished} 个未完成，下次启动会继续` : ""}。`;
+    return t().exit.summary(this.completed, unfinished);
   }
 
   private handle(event: RuntimeEvent): void {
@@ -158,7 +160,8 @@ export class LiveController implements TuiController {
     return { shares, files, quota: this.quota, localFree: this.localFree, clipboard: this.clipboard,
       userPaused: store.config("queue_paused") === "1", systemPause: store.paused(accountId), progress, events: [...this.events],
       outputRoot: store.config("output_root"), stopping: this.stopping, connections: configuredConnections(store), activeFiles: this.activeFiles(),
-      localMissing: this.missing, releasing: new Set(this.options.session.releasing?.() ?? []), account: this.account };
+      localMissing: this.missing, releasing: new Set(this.options.session.releasing?.() ?? []), account: this.account,
+      language: configuredLanguage(store) };
   }
   private activeFiles(): TuiSnapshot["activeFiles"] {
     const configured = configuredActiveFiles(this.options.store), tier = this.options.tier?.() ?? "unknown";
