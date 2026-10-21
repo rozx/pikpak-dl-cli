@@ -189,7 +189,7 @@ test("按键提示上方的分隔线嵌入作者与项目地址，放不下时�
   expect(credit).toContain(`作者 ${about.author} · ${about.site} ──`);
   expect(displayWidth(credit.trimEnd())).toBe(displayWidth((lines[1] ?? "").trimEnd()));
   expect(lines[lines.indexOf(credit) + 1]).toContain("q 退出");
-  const narrow = render(<Rule width={40} theme={createTheme({ NO_COLOR: "1" })} label={creditLabel} />); mounted.push(narrow.unmount);
+  const narrow = render(<Rule width={40} theme={createTheme({ NO_COLOR: "1" })} label={creditLabel()} />); mounted.push(narrow.unmount);
   expect(stripAnsi(narrow.lastFrame() ?? "")).toBe("─".repeat(40));
 });
 

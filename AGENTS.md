@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents (Claude Code and others) when wo
 
 PikPak DL CLI（仓库与可执行文件名 `pikpak-dl-cli`，2026-10-15 由 PikPak Downloader 改名）是 PikPak 分享下载器。它监听剪贴板（或接收粘贴）中的完整分享文本，把文件逐个转存到用户的 PikPak 云盘，再下载、校验并发布到本地。云盘只作中转空间，本工具创建的副本可以按需自动回收，也可以手动释放。
 
-技术栈是 TypeScript 加 Bun 1.4.2；无参数启动时进入 Ink（React）实现的全屏终端界面。代码注释、文档、规格与界面文字都使用中文。
+技术栈是 TypeScript 加 Bun 1.4.2；无参数启动时进入 Ink（React）实现的全屏终端界面。代码注释、规格与本文件使用中文。界面文字有简体中文、英文、日文三种（见“界面语言”），README 与 `docs/` 以中文为准，另有英文与日文译本（`README.en.md`、`README.ja.md`、`docs/en/`、`docs/ja/`）。
 
 ## 常用命令
 
@@ -17,7 +17,7 @@ bun test tests/tui-screens.test.tsx -t "全部释放"   # 按测试名过滤
 bun run dev                                    # 从源码运行并监视改动，保存后自动重启；无参数且在交互终端中时进入全屏界面
 bun run start --help                           # 从源码运行一次 CLI（src/cli.ts），不监视改动
 bun scripts/preview-tui.tsx                    # 用模拟数据预览全屏界面，不读写任务库
-bun scripts/screenshots.tsx                    # 用虚构数据重新生成 README 用的 docs/images/*.svg；界面改动后运行
+bun scripts/screenshots.tsx                    # 用虚构数据重新生成 README 用的截图（中文 docs/images/，英文与日文 docs/images/{en,ja}/）；界面改动后运行
 bun run build bun-windows-x64                  # 单文件产物输出到 dist/；目标为 bun-{darwin,windows,linux}-{arm64,x64}，默认取当前平台
 ```
 
@@ -108,7 +108,15 @@ bun run build bun-windows-x64                  # 单文件产物输出到 dist/�
 - `controller.ts` 的 `TuiController` 接口把界面与运行时隔开。
 - `live.ts` 的 `LiveController` 从任务库重建快照（节流刷新），并把会话事件交给 `view-model.ts` 的 `describeEvent`。
 - `view-model.ts` 是纯逻辑：列表行、按下载目录分组、状态外观、原因说明与位置图标。`app.tsx` 负责按键与页面切换，`main-panel.tsx`、`pages.tsx`、`parts.tsx` 负责渲染。
-- 宽度按终端显示宽度（`Bun.stringWidth`）计算。界面只用单宽文本符号，不用 emoji，因为 emoji 在 Windows Terminal 中显示错位。100 列宽的窗口必须放得下整行按键提示。
+- 宽度按终端显示宽度（`Bun.stringWidth`）计算。界面只用单宽文本符号，不用 emoji，因为 emoji 在 Windows Terminal 中显示错位。每种语言在 100 列宽的窗口中都必须放得下整行按键提示（`tests/tui-i18n.test.tsx`）；标签列宽按当前语言的标签计算，不要写死。
+
+### 界面语言（`i18n/`）
+
+- 面向用户的文字（界面、CLI 输出、错误信息、本地授权页）一律写进文案目录 `i18n/messages/`，不在代码里写字面量。`zh-CN.ts` 是基准；`en.ts`、`ja.ts` 声明为同一类型 `Messages`，缺条目或参数不一致时 `tsc` 报错。新增或修改文字时三份一起改。
+- 带插值的条目写成函数。代码在渲染或输出时调用 `t()` 取当前语言的目录，不要在模块顶层缓存文字。
+- `locale.ts` 检测系统语言：`LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`，Windows 经 `bun:ffi` 读 `GetUserDefaultUILanguage`，再到运行时区域；`zh*` 用简体中文，`ja*` 用日文，其他用英文。
+- `language.ts` 管理任务库配置键 `language`（`auto`、`zh-CN`、`en`、`ja`）。`main()` 在执行命令前以只读方式读取并确定语言；设置页经会话命令 `setLanguage` 修改，先保存并切换，再发出事件。
+- 不翻译的内容：分享标题与文件名、`status` 的 JSON 字段与原因代码、分享文本的解析关键字（`intake/parse.ts`）。
 
 ## 测试
 
@@ -117,5 +125,6 @@ bun run build bun-windows-x64                  # 单文件产物输出到 dist/�
   - `tests/fixtures/engine.ts`：引擎与会话的端到端测试。
   - `tests/space.test.ts` 内的夹具：空间回收与释放。
 - 界面测试用 `tests/fixtures/tui.ts` 的 `FakeController` 配合 `ink-testing-library`，在固定窗口尺寸下断言帧文本。
+- 模块加载时的语言是简体中文，单元测试与界面测试默认断言中文；切换语言的测试要在 `afterEach` 中 `setLocale("zh-CN")`。启动 CLI 子进程的测试用 `tests/fixtures/language.ts` 的 `chineseEnv()` 固定为中文，不受开发机与 CI 的系统语言影响。
 - 不要用 `expect(promise).rejects`：在 Windows 上，Bun 1.4.2 等待时会停止读取文件桥的输出，导致测试挂起。改用 `tests/fixtures/rejection.ts` 的 `rejection()`。
 - 在 Windows 上验证 Linux：`bun run build bun-linux-x64` 后把产物复制到 WSL，用 `BUN_BE_BUN=1 <产物> test tests` 把它当作 bun 运行测试。WSL 的墙钟会跳变，依赖 `Date.now()` 的等待（如 `until()`）可能偶发超时，以 CI 的 Ubuntu 结果为准。

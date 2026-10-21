@@ -1,13 +1,61 @@
 export type ShareInput = { shareId: string; passCode: string };
 export type ParseResult = { shares: ShareInput[]; issues: Array<"input_too_large" | "ambiguous_code" | "unsupported_link"> };
 type Link = { start: number; end: number; raw: string; shareId: string; codes: string[] };
-const trimPresentation = (value: string) => value.replace(/[，。；、）】》」\]),.;!]+$/u, "");
+const trimPresentation = (value: string) => value.replace(/[，。；、）】》」\]),.;!！？?]+$/u, "");
 
-function codes(text: string): string[] {
-  return [...text.matchAll(/(?:提取码|密码|pass\s*code|password)(?:\s*[:：=]\s*|\s+)([^\s，。,；;<>]+)/gi)]
-    .map(match => trimPresentation(match[1]!));
+// 提取码的标注（support-multilingual-share-text 决策 1）：PikPak 网页版与 Android 应用各语言复制文本里的写法，
+// 加上人们手写分享说明时的常见同义词。长的写法在前，“提取密码”不会只匹配到“密码”。
+const LABELS: readonly string[] = [
+  // 中文（简体与繁体）
+  "提取码", "提取碼", "提取密码", "提取密碼", "访问码", "訪問碼", "访问密码", "訪問密碼", "识别码", "識別碼", "分享码", "分享碼", "分享密码", "分享密碼",
+  "验证码", "驗證碼", "取件码", "取件碼", "口令", "密码", "密碼",
+  // 日文、韩文、泰文
+  "パスワード", "パスコード", "暗証番号", "抽出コード", "アクセスコード", "共有コード", "비밀번호", "암호", "추출 코드", "접근 코드", "รหัสผ่าน",
+  // 以空格分词的文字
+  "password", "passcode", "pass code", "pwd", "access code", "extraction code", "kata sandi", "kata laluan", "contraseña", "contrasena", "senha",
+  "mot de passe", "passwort", "wachtwoord", "hasło", "mật khẩu", "şifre", "пароль", "код доступа", "كلمة المرور", "كلمة السر",
+].map(label => label.normalize("NFKC"));
+// 以空格分词的文字：标注前后必须是词边界，值前必须有冒号、等号或 is，避免把“Password reset link”中的单词当成提取码。
+const SPACED = /[\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Arabic}]/u;
+const source = (label: string) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[ _-]+/g, "[ \\t_-]*");
+const labelPattern = new RegExp([...LABELS].sort((a, b) => b.length - a.length)
+  .map(label => SPACED.test(label) ? `(?<![\\p{L}\\p{N}])${source(label)}(?![\\p{L}])` : source(label)).join("|"), "giu");
+// 这些修饰词说明后面的密码不是分享的提取码：压缩包的解压密码、账号或保险箱密码、Wi-Fi 密码等。
+// 拉丁字母的修饰词必须是独立的单词：“movie.rar 密码：…”中的 rar 是文件扩展名，后面仍是提取码。
+const NOT_SHARE = /(?:解压|解壓|压缩包?|壓縮包?|解凍|圧縮|압축(?:\s*해제)?|登录|登錄|登入|账号|賬號|帳號|账户|帳戶|ログイン|로그인|保险箱|保險箱|金库|金庫|(?<![\p{L}\p{N}.])(?:unzip|unpack|archive|decompress(?:ion)?|extract|zip|rar|7z|7-zip|login|log-in|sign-in|account|vault|wi-?fi))[\s_-]*(?:文件|檔案|ファイル|file|的|の)?[\s_-]*$/iu;
+// 文本与标注先做 NFKC 归一：全角冒号、全角字母数字与半角片假名都按常规写法比较。
+// 值只在同一行内查找：标注后为空时（例如 PikPak 网页版日文模板漏填密码）不会把下一行的文件名当成提取码。
+const H = "[^\\S\\r\\n]", MARKS = "[\\u200e\\u200f\\u061c]*", OPEN = "[「『【\\[(（\"'“‘《]?";
+const TOKEN = "([^\\s，。,；;<>「」『』【】\\[\\]()（）\"'“”‘’《》！？!?]+)", ASCII = "([A-Za-z0-9０-９Ａ-Ｚａ-ｚ]{4,32})(?![A-Za-z0-9０-９Ａ-Ｚａ-ｚ])";
+const VALUES: Record<"explicit" | "connector" | "nextLine" | "spaced" | "adjacent" | "is", RegExp> = {
+  explicit: new RegExp(`${MARKS}${H}*${MARKS}[:：=＝]${H}*${MARKS}${OPEN}${TOKEN}`, "uy"),
+  connector: new RegExp(`${H}*(?:是|为|為|は)${H}*${OPEN}${ASCII}`, "uy"),
+  // 冒号在行尾、下一行只有一串字母数字，且这一行是最后一行或后面是空行：
+  // 分享模板中标注为空、下一行是文件名、再下一行是说明时，不把文件名当成提取码。
+  nextLine: new RegExp(`${H}*[:：]${H}*\\r?\\n${H}*${ASCII}${H}*(?=$|\\r?\\n${H}*(?:\\r?\\n|$))`, "uy"),
+  spaced: new RegExp(`${H}+${OPEN}${TOKEN}`, "uy"),
+  adjacent: new RegExp(ASCII, "uy"),
+  is: new RegExp(`${H}+is${H}+${ASCII}`, "iuy"),
+};
+function valueAt(text: string, at: number, spaced: boolean): string | null {
+  for (const kind of spaced ? ["explicit", "nextLine", "is"] as const : ["explicit", "connector", "nextLine", "spaced", "adjacent"] as const) {
+    const pattern = VALUES[kind]; pattern.lastIndex = at;
+    const match = pattern.exec(text);
+    if (match) return trimPresentation(match[1]!.normalize("NFKC"));
+  }
+  return null;
 }
-const urls = /https?:\/\/[^\s<>"'，。；、）】》」]+/gi;
+function codes(input: string): string[] {
+  const text = input.normalize("NFKC"), found: string[] = [];
+  for (const match of text.matchAll(labelPattern)) {
+    const lineStart = text.lastIndexOf("\n", match.index - 1) + 1;
+    if (NOT_SHARE.test(text.slice(Math.max(lineStart, match.index - 24), match.index))) continue;
+    const value = valueAt(text, match.index + match[0].length, SPACED.test(match[0]));
+    if (value !== null) found.push(value);
+  }
+  return found;
+}
+const urls = /https?:\/\/[^\s<>"'，。；、（）【】《》「」『』]+/gi;
 // 官方复制的分享文本以空行隔开链接与提取码；只含码的块并入紧邻的、尚无任何码的链接块，其余块仍互相隔离。
 function blocks(text: string): string[] {
   const result: string[] = [];
@@ -31,7 +79,7 @@ export function parseShares(text: string): ParseResult {
   const result: ParseResult = { shares: [], issues: [] };
   for (const block of blocks(text)) {
     const links: Link[] = [];
-    const urlMatches = [...block.matchAll(/https?:\/\/[^\s<>"'，。；、）】》」]+/gi)];
+    const urlMatches = [...block.matchAll(/https?:\/\/[^\s<>"'，。；、（）【】《》「」『』]+/gi)];
     for (const match of urlMatches) {
       const raw = trimPresentation(match[0]);
       let url: URL;
@@ -45,7 +93,7 @@ export function parseShares(text: string): ParseResult {
       links.push({ start: match.index, end: match.index + match[0].length, raw: match[0], shareId: path[1], codes: queryCodes });
     }
     if (!links.length) continue;
-    const withoutUrls = block.replace(/https?:\/\/[^\s<>"'，。；、）】》」]+/gi, " ");
+    const withoutUrls = block.replace(/https?:\/\/[^\s<>"'，。；、（）【】《》「」『』]+/gi, " ");
     if (urlMatches.length !== links.length && codes(withoutUrls).length) {
       result.issues.push("ambiguous_code"); continue;
     }
@@ -66,7 +114,7 @@ export function parseShares(text: string): ParseResult {
       const next = block.indexOf("\n", link.end);
       const end = next < 0 ? block.length : next;
       if (links.filter(other => other.start >= start && other.start < end).length !== 1) return null;
-      return codes(block.slice(start, end).replace(/https?:\/\/[^\s<>"'，。；、）】》」]+/gi, " "));
+      return codes(block.slice(start, end).replace(/https?:\/\/[^\s<>"'，。；、（）【】《》「」『』]+/gi, " "));
     });
     const codesOutsideLinkLines = lines.some(line => !/https?:\/\//i.test(line) && codes(line).length > 0);
     const linePairs = ownLineCodes.every(value => value !== null) && !codesOutsideLinkLines;

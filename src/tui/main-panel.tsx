@@ -5,6 +5,7 @@ import type { TuiSnapshot } from "./controller";
 import { formatBytes, formatDuration, formatSpeed, truncateMiddle } from "./format";
 import { locationMark, shareLocation, type ListRow, type Location, type Row, type ShareCounts } from "./view-model";
 import { Banners, Bar, Header, Keys, Rule, SPINNER, bannerLines, boxHighlight, creditLabel, textHighlight, useSpinner } from "./parts";
+import { t } from "../i18n";
 
 export type Size = { columns: number; rows: number };
 export const MIN_COLUMNS = 60, MIN_ROWS = 15;
@@ -26,15 +27,16 @@ function LocationMark({ location, theme, selected }: { location: Location; theme
 function CountsText({ counts, theme, scanning, cancelled, paused, selected, frame }: { counts: ShareCounts; theme: Theme; scanning: boolean; cancelled: boolean; paused: boolean; selected: boolean; frame: number | null }) {
   const paint = (tone: Tone) => theme.paint(tone, selected);
   const part = (value: number, text: string, tone: Tone) => value > 0 ? <Text {...paint(tone)}> · {value} {text}</Text> : null;
-  if (scanning && counts.total === 0) return <Text {...paint("scan")}>  {frame === null ? "" : `${SPINNER[frame]} `}扫描中…</Text>;
+  const text = t().main, label = text.counts;
+  if (scanning && counts.total === 0) return <Text {...paint("scan")}>  {frame === null ? "" : `${SPINNER[frame]} `}{text.scanning}</Text>;
   return (
     <Text>
-      <Text {...paint(counts.completed === counts.total && counts.total > 0 ? "done" : "text")}>  {counts.completed}/{counts.total} 完成</Text>
-      {part(counts.downloading, "下载中", "active")}{part(counts.transferring, "转存中", "transfer")}{part(counts.paused, "暂停", "warning")}
-      {part(counts.queued, "排队", "muted")}{part(counts.failed, "失败", "error")}{part(counts.waiting, "等待", "warning")}{part(counts.cancelled, "已取消", "muted")}
-      {part(counts.releasing, "释放中", "transfer")}{part(counts.missing, "本地缺失", "warning")}
-      {cancelled && <Text {...paint("muted")}> · 分享已取消</Text>}
-      {paused && !cancelled && <Text {...paint("warning")}> · 已暂停</Text>}
+      <Text {...paint(counts.completed === counts.total && counts.total > 0 ? "done" : "text")}>  {text.completed(counts.completed, counts.total)}</Text>
+      {part(counts.downloading, label.downloading, "active")}{part(counts.transferring, label.transferring, "transfer")}{part(counts.paused, label.paused, "warning")}
+      {part(counts.queued, label.queued, "muted")}{part(counts.failed, label.failed, "error")}{part(counts.waiting, label.waiting, "warning")}{part(counts.cancelled, label.cancelled, "muted")}
+      {part(counts.releasing, label.releasing, "transfer")}{part(counts.missing, label.missing, "warning")}
+      {cancelled && <Text {...paint("muted")}>{text.shareCancelled}</Text>}
+      {paused && !cancelled && <Text {...paint("warning")}>{text.sharePaused}</Text>}
     </Text>
   );
 }
@@ -44,8 +46,8 @@ function FileStatus({ row, snapshot, theme, selected }: { row: Extract<Row, { ki
   const progress = snapshot.progress[row.file.id];
   const bytes = progress?.bytes ?? row.file.checkpoint, size = row.file.size;
   const percent = size > 0n ? Number(bytes * 100n / size) : 100;
-  if (row.look.label === "已暂停") {
-    return <Text><Bar percent={percent} theme={theme} tone="warning" selected={selected} /><Text {...paint("text")}>  {percent}%</Text><Text {...paint("warning")}>  已暂停</Text></Text>;
+  if (row.look.label === t().looks.paused) {
+    return <Text><Bar percent={percent} theme={theme} tone="warning" selected={selected} /><Text {...paint("text")}>  {percent}%</Text><Text {...paint("warning")}>  {row.look.label}</Text></Text>;
   }
   if (row.file.state === "downloading" && !row.file.cancelled) {
     return (
@@ -67,7 +69,7 @@ export function RowLine({ row, selected, snapshot, theme, columns, frame = null 
     return (
       <Text wrap="truncate-end">
         <Text {...theme.paint("active")}>━━ </Text><Text {...theme.paint("group")} bold>{truncateMiddle(row.path, Math.max(10, columns - 24))}</Text>
-        <Text {...theme.paint("active")}> ━━</Text><Text {...theme.paint("muted")}>  {row.shares} 个分享</Text>
+        <Text {...theme.paint("active")}> ━━</Text><Text {...theme.paint("muted")}>  {t().main.groupShares(row.shares)}</Text>
       </Text>
     );
   }
@@ -78,7 +80,7 @@ export function RowLine({ row, selected, snapshot, theme, columns, frame = null 
           <Text wrap="truncate-end">
             <Text {...theme.paint("muted", selected)}>{row.expanded ? "  ▼ " : "  ▶ "}</Text>
             <LocationMark location={shareLocation(row.counts)} theme={theme} selected={selected} />
-            <Text {...theme.paint("strong", selected)} bold {...textHighlight(theme.selection, selected)}>「{row.share.title ?? row.share.id}」</Text>
+            <Text {...theme.paint("strong", selected)} bold {...textHighlight(theme.selection, selected)}>{t().quote(row.share.title ?? row.share.id)}</Text>
             <CountsText counts={row.counts} theme={theme} scanning={row.share.scanStatus !== "complete"} cancelled={row.share.cancelled} paused={row.share.paused} selected={selected} frame={frame} />
           </Text>
         </Box>
@@ -89,11 +91,12 @@ export function RowLine({ row, selected, snapshot, theme, columns, frame = null 
   const nameWidth = nameWidthFor(columns);
   return (
     <Box {...boxHighlight(theme.selection, selected)}>
-      <Text {...theme.paint("key", selected)} bold>{selected ? "    > " : "      "}</Text>
-      <Box width={3}><Text {...theme.paint(row.look.tone, selected)}>{row.look.active && frame !== null ? SPINNER[frame] : row.look.icon}</Text></Box>
-      <LocationMark location={row.location} theme={theme} selected={selected} />
-      <Box width={nameWidth} marginRight={1}><Text {...theme.paint("text", selected)} bold={selected} {...textHighlight(theme.selection, selected)}>{truncateMiddle(row.name, nameWidth)}</Text></Box>
-      <Box width={8} marginRight={1}><Text {...theme.paint("muted", selected)}>{formatBytes(row.file.size)}</Text></Box>
+      {/* 定宽列不收缩：状态说明再长也只在自己的列内截断，缩进与名称不会被挤成两行。 */}
+      <Box flexShrink={0}><Text {...theme.paint("key", selected)} bold>{selected ? "    > " : "      "}</Text></Box>
+      <Box width={3} flexShrink={0}><Text {...theme.paint(row.look.tone, selected)}>{row.look.active && frame !== null ? SPINNER[frame] : row.look.icon}</Text></Box>
+      <Box flexShrink={0}><LocationMark location={row.location} theme={theme} selected={selected} /></Box>
+      <Box width={nameWidth} marginRight={1} flexShrink={0}><Text {...theme.paint("text", selected)} bold={selected} {...textHighlight(theme.selection, selected)}>{truncateMiddle(row.name, nameWidth)}</Text></Box>
+      <Box width={8} marginRight={1} flexShrink={0}><Text {...theme.paint("muted", selected)}>{formatBytes(row.file.size)}</Text></Box>
       <Box flexShrink={1} flexGrow={1}><FileStatus row={row} snapshot={snapshot} theme={theme} selected={selected} /></Box>
     </Box>
   );
@@ -117,22 +120,22 @@ export function MainPanel({ snapshot, rows, selected, offset, size, theme, overl
       <Rule width={width} theme={theme} />
       <Box flexDirection="column" height={listHeight}>
         {rows.length === 0
-          ? <Text {...theme.paint("muted")}>还没有任务。复制包含链接和提取码的分享文本，或按 a 粘贴。</Text>
+          ? <Text {...theme.paint("muted")}>{t().main.empty}</Text>
           : rows.slice(offset, offset + listHeight).map((row, index) =>
             <RowLine key={row.key} row={row} selected={offset + index === selected} snapshot={snapshot} theme={theme} columns={size.columns} frame={frame} />)}
       </Box>
       {overlay}
       <Rule width={width} theme={theme} />
       <Box flexDirection="column" height={eventLines}>
-        {events.length === 0 ? <Text {...theme.paint("muted")}>暂无事件</Text> : events.map((event, index) => (
+        {events.length === 0 ? <Text {...theme.paint("muted")}>{t().main.noEvents}</Text> : events.map((event, index) => (
           <Text key={`${event.at}-${index}`} wrap="truncate-end">
             <Text {...theme.paint("muted")}>{clock(event.at)}  </Text><Text {...theme.paint(event.tone)}>{event.icon} </Text><Text {...theme.paint("text")}>{event.text}</Text>
           </Text>
         ))}
       </Box>
-      <Rule width={width} theme={theme} label={creditLabel} />
+      <Rule width={width} theme={theme} label={creditLabel()} />
       {snapshot.stopping
-        ? <Text {...theme.paint("warning")}>正在停止并保存进度…（再按 Ctrl+C 立即退出）</Text>
+        ? <Text {...theme.paint("warning")}>{t().main.stopping}</Text>
         : <Keys items={keys} theme={theme} />}
     </Box>
   );

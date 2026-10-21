@@ -3,6 +3,10 @@
 </p>
 
 <p align="center">
+  <b>简体中文</b> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a>
+</p>
+
+<p align="center">
   <b>复制分享文本，剩下的交给它。</b><br>
   逐个转存 PikPak 分享中的文件，下载、校验后放进本地目录，并按需腾出云盘空间。
 </p>
@@ -44,6 +48,7 @@
 - **不碰你的密码**：在浏览器中通过 PikPak 官方页面授权，令牌与提取码存放在系统凭据库（Windows 凭据管理器、macOS 钥匙串、Linux Secret Service）。
 - **一目了然的终端界面**：按下载目录分组显示每个分享和文件的状态、进度、速度和剩余时间；暂停、继续、重试、取消、释放云端副本都只需按一个键。
 - **单个可执行文件**：Windows、macOS、Linux 各有独立产物，内含运行时，下载即用。
+- **简体中文、English、日本語**：界面、命令行与授权页按系统语言自动切换，也可以手动指定。
 
 ## 快速开始
 
@@ -165,10 +170,17 @@ xattr -d com.apple.quarantine ./pikpak-dl-cli-darwin-arm64
 - **剪贴板监听**：关闭后只能用 `a` 粘贴。
 - **下载连接数**：单个文件同时使用的连接数，1–8，默认 4。
 - **同时下载文件数**：1–5，默认 1；会员最多 5 个，免费账号只能 1 个。
+- **语言**：用 ←→ 在跟随系统、简体中文、English、日本語之间切换，界面立即改用新语言。
 
 <p align="center">
-  <img src="docs/images/settings.svg" alt="设置：下载目录、剪贴板监听、连接数与同时下载文件数" width="820">
+  <img src="docs/images/settings.svg" alt="设置：下载目录、剪贴板监听、连接数、同时下载文件数与语言" width="820">
 </p>
+
+### 界面语言
+
+支持简体中文、English 和日本語，全屏界面、命令行输出、错误信息和浏览器里的授权页都使用同一种语言。默认跟随系统语言：依次读取环境变量 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`，Windows 上再读取系统显示语言，最后读取运行环境的默认区域设置。中文系统（包括繁体中文）显示简体中文，日文系统显示日文，其他语言显示英文。
+
+想固定某种语言时，在设置页切换，或者运行 `config --language <auto|zh-CN|en|ja>`（`auto` 恢复跟随系统）。分享标题和文件名保持原样；`status` 输出的 JSON 字段与原因代码不随语言变化，可以放心在脚本里使用。
 
 ### 命令行
 
@@ -182,6 +194,7 @@ xattr -d com.apple.quarantine ./pikpak-dl-cli-darwin-arm64
 .\pikpak-dl-cli-windows-x64.exe cancel s_1a2b3c4d            # 取消一个分享任务
 .\pikpak-dl-cli-windows-x64.exe config --connections 6
 .\pikpak-dl-cli-windows-x64.exe config --files 3
+.\pikpak-dl-cli-windows-x64.exe config --language en         # 界面语言：auto、zh-CN、en、ja
 .\pikpak-dl-cli-windows-x64.exe logout                      # 清除令牌，保留任务
 ```
 
@@ -227,13 +240,14 @@ bun run dev                      # 从源码运行并监视改动，保存后自
 bun run start --help             # 从源码运行一次，不监视改动
 bun run build bun-windows-x64    # 单文件产物输出到 dist/，默认取当前平台
 bun scripts/preview-tui.tsx      # 用模拟数据预览全屏界面，不读写任务库
-bun scripts/screenshots.tsx      # 用模拟数据重新生成 docs/images/ 中的截图
+bun scripts/screenshots.tsx      # 用模拟数据重新生成 docs/images/ 中各语言的截图
 ```
 
 - 构建目标为 `bun-{windows,darwin,linux}-{x64,arm64}`。macOS 原生模块需要 Xcode Command Line Tools 与 Node-API 头文件，可用 `NODE_API_HEADERS` 指定头文件目录；发行产物已内含运行时与原生适配，使用者无需安装这些工具。
 - Windows 产物的图标与文件信息在构建时写入，图标由 `scripts/icon.ts` 按像素图生成；macOS 与 Linux 的可执行文件不带图标。
 - `PIKPAK_DOWNLOADER_STATE_DIR` 可以另指任务库所在目录，供测试与本地试验使用。
-- 截图中的分享、文件与账号都是虚构的。修改界面后运行 `bun scripts/screenshots.tsx` 更新截图。
+- 截图中的分享、文件与账号都是虚构的。修改界面后运行 `bun scripts/screenshots.tsx` 更新截图：中文写到 `docs/images/`，英文与日文写到 `docs/images/en/`、`docs/images/ja/`。
+- 界面文字在 `src/i18n/messages/`：`zh-CN.ts` 是基准，`en.ts` 与 `ja.ts` 缺条目时类型检查失败。
 
 架构、约定与测试说明见 [AGENTS.md](AGENTS.md)。需求变更走 [OpenSpec](openspec/) 流程，规格在 `openspec/specs/`。发布时在 `release/x.y.z` 分支写好 `docs/releaseNotes/vx.y.z.md` 并创建带 `release` 标签的 PR，合并后 GitHub Actions 在三个平台上检查、构建并创建 Release。
 

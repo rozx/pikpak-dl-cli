@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { version } from "../package.json";
 import { acquireQueueLock } from "../src/state/lock";
 import { Store } from "../src/state/store";
+import { chineseEnv } from "./fixtures/language";
 
 test("前台主循环收到 SIGINT 后关闭监听并释放执行锁", async () => {
   const root = await mkdtemp(join(tmpdir(), "pikpak-watch-test-"));
@@ -29,7 +30,7 @@ test("前台主循环收到 SIGINT 后关闭监听并释放执行锁", async () 
 test("干净状态缺登录时 watch 给出指引，配置与版本命令可独立使用", async () => {
   const root = await mkdtemp(join(tmpdir(), "pikpak-cli-test-"));
   const run = async (...args: string[]) => {
-    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: { ...process.env, PIKPAK_DOWNLOADER_STATE_DIR: root }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: chineseEnv({ PIKPAK_DOWNLOADER_STATE_DIR: root }), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     return { output: await new Response(child.stdout).text(), error: await new Response(child.stderr).text(), code: await child.exited };
   };
   try {
@@ -43,7 +44,7 @@ test("干净状态缺登录时 watch 给出指引，配置与版本命令可独�
 test("config --connections 校验 1–8 并在 status 中显示；监听占锁时拒绝写入", async () => {
   const root = await mkdtemp(join(tmpdir(), "pikpak-cli-test-"));
   const run = async (...args: string[]) => {
-    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: { ...process.env, PIKPAK_DOWNLOADER_STATE_DIR: root }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: chineseEnv({ PIKPAK_DOWNLOADER_STATE_DIR: root }), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     return { output: await new Response(child.stdout).text(), error: await new Response(child.stderr).text(), code: await child.exited };
   };
   try {
@@ -62,7 +63,7 @@ test("config --connections 校验 1–8 并在 status 中显示；监听占锁�
 test("config --files 校验 1–5，status 显示配置值、账号等级与实际生效值", async () => {
   const root = await mkdtemp(join(tmpdir(), "pikpak-cli-test-"));
   const run = async (...args: string[]) => {
-    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: { ...process.env, PIKPAK_DOWNLOADER_STATE_DIR: root }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: chineseEnv({ PIKPAK_DOWNLOADER_STATE_DIR: root }), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     return { output: await new Response(child.stdout).text(), error: await new Response(child.stderr).text(), code: await child.exited };
   };
   try {

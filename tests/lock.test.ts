@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { prepareState } from "../src/state/paths";
 import { Store } from "../src/state/store";
 import { acquireQueueLock } from "../src/state/lock";
+import { chineseEnv } from "./fixtures/language";
 
 test("跨进程写命令拒绝并发，status 可读，强制结束后锁文件不造成假锁", async () => {
   const root = await mkdtemp(join(tmpdir(), "pikpak-lock-test-"));
@@ -21,7 +22,7 @@ test("跨进程写命令拒绝并发，status 可读，强制结束后锁文件�
     expect(new TextDecoder().decode(ready.value)).toBe("held\n");
     expect(() => acquireQueueLock(paths.lock)).toThrow("已有实例");
     const run = async (...args: string[]) => {
-      const proc = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: { ...process.env, PIKPAK_DOWNLOADER_STATE_DIR: root }, stdout: "pipe", stderr: "pipe" });
+      const proc = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: chineseEnv({ PIKPAK_DOWNLOADER_STATE_DIR: root }), stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
       return { code: await proc.exited, stdout, stderr };
     };

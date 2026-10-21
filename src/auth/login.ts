@@ -3,6 +3,7 @@ import { AppError } from "../errors";
 import { authorizationUrl, exchange, newAttempt, takeAuthorizationCode, type Transport } from "../pikpak/protocol";
 import type { SessionManager } from "./session";
 import { grantedScopes, missingPermissions, permissionNames } from "./permissions";
+import { t } from "../i18n";
 import { failurePage, insufficientPage, landingPage, successPage } from "./login-page";
 
 async function openBrowser(url: string): Promise<void> {
@@ -38,7 +39,7 @@ export async function login(session: LoginSession, force = false, announce = con
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'" };
   const server = Bun.serve({ hostname: "127.0.0.1", port: Number(callback.port),
     async fetch(request) {
-      if (request.headers.get("host") !== callback.host || request.method !== "GET") return new Response("请求无效", { status: 400 });
+      if (request.headers.get("host") !== callback.host || request.method !== "GET") return new Response(t().login.badRequest, { status: 400 });
       const url = new URL(request.url);
       if (url.pathname === `/authorize/${nonce}`) {
         // 上一次尝试已用掉或过期时（例如权限不足后重新授权）换用新的 state 与 PKCE 参数；未用掉时沿用，避免多开的标签页互相作废。
@@ -46,12 +47,12 @@ export async function login(session: LoginSession, force = false, announce = con
         return new Response(null, { status: 302, headers: { ...headers, Location: authorizationUrl(client, attempt) } });
       }
       if (url.pathname === "/") return new Response(landingPage(`/authorize/${nonce}`), { headers });
-      if (url.pathname !== "/callback" || callbackRunning) return new Response(failurePage("页面不可用。"), { headers, status: 404 });
+      if (url.pathname !== "/callback" || callbackRunning) return new Response(failurePage(t().login.pageUnavailable), { headers, status: 404 });
       let code: string;
       try { code = takeAuthorizationCode(url, attempt); }
       catch {
         if (attempt.used) setTimeout(() => reject(new AppError("authorization_failed")), 200);
-        return new Response(failurePage("授权响应无效或已被拒绝，请回到终端重新登录。"), { headers, status: 400 });
+        return new Response(failurePage(t().login.invalidResponse), { headers, status: 400 });
       }
       callbackRunning = true;
       try {
@@ -60,7 +61,7 @@ export async function login(session: LoginSession, force = false, announce = con
         const missing = missingPermissions(grantedScopes(tokens));
         if (missing.length) {
           callbackRunning = false;
-          announce(`授权缺少必须的权限：${permissionNames(missing)}。请在浏览器页面点击“重新授权”并勾选全部权限。`);
+          announce(t().login.insufficient(permissionNames(missing)));
           return new Response(insufficientPage(missing, `/authorize/${nonce}`), { headers });
         }
         const account = await session.accept(tokens, client);
@@ -68,7 +69,7 @@ export async function login(session: LoginSession, force = false, announce = con
         return new Response(successPage(), { headers });
       } catch {
         setTimeout(() => reject(new AppError("authorization_failed")), 200);
-        return new Response(failurePage("授权未能保存，或账号身份与容量核对失败。请查看终端提示。"), { headers, status: 400 });
+        return new Response(failurePage(t().login.saveFailed), { headers, status: 400 });
       }
     },
   });
@@ -76,8 +77,8 @@ export async function login(session: LoginSession, force = false, announce = con
   const cancel = () => reject(new AppError("authorization_failed"));
   if (options.signal?.aborted) cancel(); else options.signal?.addEventListener("abort", cancel, { once: true });
   try {
-    announce(`请在浏览器完成登录。本地入口：${callback.origin}`);
-    await (options.openBrowser ?? openBrowser)(callback.origin).catch(() => { announce("自动打开浏览器失败，请手动打开上方本地入口。"); });
+    announce(t().login.open(callback.origin));
+    await (options.openBrowser ?? openBrowser)(callback.origin).catch(() => { announce(t().login.browserFailed); });
     return await result;
   } finally { clearTimeout(timeout); options.signal?.removeEventListener("abort", cancel); server.stop(true); }
 }

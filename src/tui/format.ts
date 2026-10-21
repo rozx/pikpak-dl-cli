@@ -1,3 +1,5 @@
+import { t } from "../i18n";
+
 const units = ["B", "KB", "MB", "GB", "TB"] as const;
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -12,9 +14,10 @@ export function formatBytes(bytes: bigint, precise = false): string {
 export const formatSpeed = (bytesPerSecond: number): string => `${formatBytes(BigInt(Math.max(0, Math.round(bytesPerSecond))))}/s`;
 export function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.round(seconds)), pad = (value: number) => String(value).padStart(2, "0");
-  if (total < 60) return `${total}秒`;
-  if (total < 3600) return `${Math.floor(total / 60)}分${pad(total % 60)}秒`;
-  return `${Math.floor(total / 3600)}时${pad(Math.floor(total % 3600 / 60))}分`;
+  const text = t().duration;
+  if (total < 60) return text.seconds(total);
+  if (total < 3600) return text.minutes(Math.floor(total / 60), pad(total % 60));
+  return text.hours(Math.floor(total / 3600), pad(Math.floor(total % 3600 / 60)));
 }
 
 export const displayWidth = (text: string): number => Bun.stringWidth(text);

@@ -17,39 +17,20 @@ import { interruptible } from "./runtime/lifecycle";
 import { configuredConnections, saveConnections } from "./download/connections";
 import { configuredActiveFiles, saveActiveFiles } from "./runtime/active-files";
 import { storedTier, tierCap } from "./pikpak/tier";
-
-const help = `${about.name} ${about.version}
-把 PikPak 云盘作为下载中转空间。作者 ${about.author} · ${about.homepage}
-
-用法：pikpak-dl-cli                  在交互终端中打开全屏界面（检查登录与下载目录后开始监听）
-      pikpak-dl-cli <命令> [选项]     供脚本或非交互场景使用
-
-  --help                 显示帮助
-  --version              显示版本
-  login [--force]         浏览器登录或核对已有会话
-  permissions            查看当前授权的权限
-  logout                 清除认证令牌并保留任务
-  watch [--output <目录>] 前台监听剪贴板并处理下载队列
-  status [任务ID]        只读查看任务状态
-  config --output <目录> 设置新分享的默认目录
-  config --connections <1-8>
-                         设置单个文件的下载连接数（默认 4）
-  config --files <1-5>   设置同时下载的文件数（默认 1；免费账号只能 1）
-  retry <任务ID>         开启新的有限重试周期
-  cancel <任务ID>        停止调度并保留资源
-`;
+import { t } from "./i18n";
+import { initLanguage, languageName, saveLanguage } from "./i18n/language";
 
 // 打印服务端返回的授权范围与每项权限的判定；范围不含应用权限时说明无法确认。
 async function printPermissions(session: SessionManager, raw: boolean): Promise<void> {
-  const scopes = await session.scopes();
-  if (raw) console.log(`服务端返回的授权范围：${scopes?.join(" ") || "未返回"}`);
+  const scopes = await session.scopes(), text = t().cli;
+  if (raw) console.log(text.rawScopes(scopes?.join(" ") || text.scopesMissing));
   if (!informativeScopes(scopes)) {
-    console.log("服务端返回的授权范围不含应用权限，无法确认授权页的勾选结果；操作被拒绝时请用 login --force 重新授权并勾选全部权限。");
+    console.log(text.scopesUninformative);
     return;
   }
-  for (const row of permissionRows(scopes)) console.log(`  ${row.state === "granted" ? "✓" : "✗"} ${row.label}（${row.scope}）${row.state === "missing" ? (row.required ? " 缺少" : " 未授予，本工具暂不使用") : ""}`);
+  for (const row of permissionRows(scopes)) console.log(`  ${row.state === "granted" ? "✓" : "✗"} ${text.permission(row.label, row.scope)}${row.state === "missing" ? (row.required ? text.permissionMissing : text.permissionUnused) : ""}`);
   const missing = missingPermissions(scopes);
-  if (missing.length) console.log(`缺少必须的权限：${permissionNames(missing)}。请运行 login --force 重新授权并勾选全部权限。`);
+  if (missing.length) console.log(text.missingPermissions(permissionNames(missing)));
 }
 
 function activeAccount(store: Store): string {
@@ -71,18 +52,18 @@ export async function runCli(args: string[]): Promise<void> {
     process.exitCode = code; return;
   }
   if (!args.length || (args.length === 1 && ["--help", "-h", "help"].includes(args[0]!))) {
-    console.log(help); return;
+    console.log(t().cli.help(about)); return;
   }
   if (args.length === 1 && ["--version", "-v"].includes(args[0]!)) { console.log(about.version); return; }
   const command = args[0];
   if (command === "status") {
     if (args.length > 2) throw new AppError("invalid_input");
     const database = join(stateRoot(), "tasks.sqlite");
-    if (!await Bun.file(database).exists()) { console.log("尚无任务记录。请先登录并配置下载目录。"); return; }
+    if (!await Bun.file(database).exists()) { console.log(t().cli.noTasks); return; }
     const store = new Store(database, true);
     try {
       const account = store.config("active_account");
-      if (!account) { console.log("未设置活动账号，请先登录。"); return; }
+      if (!account) { console.log(t().cli.noAccount); return; }
       if (args[1]?.startsWith("f_")) {
         const file = store.file(account, args[1]);
         console.log(JSON.stringify({ id: file.id, state: file.state === "completed" ? "completed" : file.cancelled ? "cancelled" : file.state, retries: Number(file.retries), reason: file.lastError }));
@@ -99,7 +80,7 @@ export async function runCli(args: string[]): Promise<void> {
     return;
   }
   if (["config", "retry", "cancel", "login", "logout", "watch", "permissions"].includes(command!)) {
-    if (command === "config" ? args.length !== 3 || !["--output", "--connections", "--files"].includes(args[1]!) : ["retry", "cancel"].includes(command!) && args.length !== 2) throw new AppError("invalid_input");
+    if (command === "config" ? args.length !== 3 || !["--output", "--connections", "--files", "--language"].includes(args[1]!) : ["retry", "cancel"].includes(command!) && args.length !== 2) throw new AppError("invalid_input");
     if (command === "login" && (args.length > 2 || (args[1] && args[1] !== "--force"))) throw new AppError("invalid_input");
     if ((command === "logout" || command === "permissions") && args.length !== 1) throw new AppError("invalid_input");
     if (command === "watch" && args.length !== 1 && !(args.length === 3 && args[1] === "--output")) throw new AppError("invalid_input");
@@ -114,7 +95,7 @@ export async function runCli(args: string[]): Promise<void> {
         }
         if (command === "permissions") {
           const session = new SessionManager(systemSecrets());
-          if (!await session.scopes() && !await systemSecrets().get("session.current")) console.log("尚未登录。");
+          if (!await session.scopes() && !await systemSecrets().get("session.current")) console.log(t().cli.notLoggedIn);
           else await printPermissions(session, true);
           return;
         }
@@ -124,30 +105,34 @@ export async function runCli(args: string[]): Promise<void> {
             const account = store.config("active_account");
             if (account) store.pause(account, "authentication");
             await session.logout();
-            console.log("已登出。任务历史、分享资料和下载文件均保留。");
+            console.log(t().cli.loggedOut);
           } else {
             const account = await login(session, args[1] === "--force");
             store.ensureAccount(account); store.setConfig("active_account", account); store.clearAuthenticationPause(account);
-            console.log("登录成功，账号身份与容量读取已核对。");
+            console.log(t().cli.loggedIn);
             await printPermissions(session, false);
           }
           return;
         }
         if (command === "config" && args[1] === "--files") {
-          console.log(`已保存同时下载的文件数 ${saveActiveFiles(store, args[2]!)}；实际生效值受账号等级限制，免费账号只能同时下载 1 个文件。`);
+          console.log(t().cli.savedActiveFiles(saveActiveFiles(store, args[2]!)));
         } else if (command === "config" && args[1] === "--connections") {
-          console.log(`已保存下载连接数 ${saveConnections(store, args[2]!)}；从下一个文件开始生效。`);
+          console.log(t().cli.savedConnections(saveConnections(store, args[2]!)));
+        } else if (command === "config" && args[1] === "--language") {
+          // 先保存并切换，再取文字：确认提示已经是新语言。
+          const setting = saveLanguage(store, args[2]!);
+          console.log(t().cli.savedLanguage(languageName(setting)));
         } else if (command === "config") {
           const output = await realpath(resolve(args[2]!));
           if (!(await stat(output)).isDirectory()) throw new AppError("invalid_input");
           await access(output, constants.W_OK | constants.X_OK);
           store.setConfig("output_root", output);
           const account = store.config("active_account"), moved = account ? store.moveUnstartedShares(account, output).length : 0;
-          console.log(`已保存默认下载目录${moved ? `；${moved} 个尚未开始的分享改用新目录` : ""}；已开始或已完成的分享保留原目录。`);
+          console.log(t().cli.savedOutput(moved));
         } else {
           const account = activeAccount(store);
-          if (command === "cancel") { store.cancel(account, args[1]!); store.recheckCancelledPause(account); console.log("已取消未完成工作；本地文件、云端副本和操作记录均保留。"); }
-          else { store.retry(account, args[1]!); console.log("已安排重试；已完成版本保持不变，未知操作仍需先核对。"); }
+          if (command === "cancel") { store.cancel(account, args[1]!); store.recheckCancelledPause(account); console.log(t().cli.cancelled); }
+          else { store.retry(account, args[1]!); console.log(t().cli.retried); }
         }
       } finally { store.close(); }
     } finally { lock.release(); }
@@ -157,6 +142,12 @@ export async function runCli(args: string[]): Promise<void> {
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
+  // 输出任何文字前确定语言（add-multilingual-ui 决策 4）；剪贴板子进程不输出文字。
+  if (args[0] !== "--internal-clipboard") {
+    let database: string | null = null;
+    try { database = join(stateRoot(), "tasks.sqlite"); } catch { /* 平台不受支持时跟随系统，错误由命令本身报告。 */ }
+    await initLanguage(database);
+  }
   try { await runCli(args); }
   catch (error) { console.error(publicError(error)); process.exitCode = 1; }
 }

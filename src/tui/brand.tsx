@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { about } from "../about";
+import { t } from "../i18n";
 import type { Theme } from "./theme";
 import { displayWidth } from "./format";
 
@@ -24,7 +25,7 @@ function LogoLine({ line, theme }: { line: string; theme: Theme }) {
 export function AboutLine({ theme }: { theme: Theme }) {
   return (
     <Text wrap="truncate-end">
-      <Text {...theme.paint("strong")}>v{about.version}</Text><Text {...theme.paint("muted")}>  ·  作者 </Text>
+      <Text {...theme.paint("strong")}>v{about.version}</Text><Text {...theme.paint("muted")}>  ·  {t().author}</Text>
       <Text {...theme.paint("text")}>{about.author}</Text><Text {...theme.paint("muted")}>  ·  </Text><Text {...theme.paint("active")}>{about.site}</Text>
     </Text>
   );
@@ -46,7 +47,7 @@ export function Brand({ theme, compact }: { theme: Theme; compact: boolean }) {
       <Text {...theme.paint("strong")} bold>{SUBTITLE}</Text>
       <Text> </Text>
       <AboutLine theme={theme} />
-      <Text {...theme.paint("muted")}>复制分享文本 → 转存到 PikPak 云盘 → 下载到本地</Text>
+      <Text {...theme.paint("muted")}>{t().tagline}</Text>
     </Box>
   );
 }

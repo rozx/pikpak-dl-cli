@@ -13,6 +13,7 @@ import { systemFiles } from "../src/platform/file-system";
 import type { LocalFileSystem } from "../src/platform/files";
 import type { Clipboard } from "../src/intake/clipboard";
 import { engineFixture } from "./fixtures/engine";
+import { locale, setLocale } from "../src/i18n";
 
 const nativeFiles = ["darwin", "win32", "linux"].includes(process.platform);
 let files: LocalFileSystem | undefined;
@@ -238,6 +239,20 @@ test("设置下载连接数：合法值写入任务库，越界值被拒绝并�
     for (const count of [0, 9, 2.5]) expect(await session.command({ kind: "setDownloadConnections", count })).toEqual({ ok: false, reason: "invalid_input" });
     expect(f.store.config("download_connections")).toBe("6");
   } finally { abort.abort(); await running; await f.close(); }
+});
+
+test("设置界面语言：先保存并切换语言，再发出命令事件；非法值被拒绝并保留原值", async () => {
+  const f = await storeFixture();
+  const session = new RuntimeSession(f.store, "account", fakeEngine(async () => { await Bun.sleep(5); return false; }).engine, f.receiver, fakeClipboard().clipboard);
+  const seen: string[] = []; session.subscribe(event => { if (event.type === "command" && event.reason === "setLanguage") seen.push(locale()); });
+  const abort = new AbortController(); const running = session.run(abort.signal);
+  try {
+    expect((await session.command({ kind: "setLanguage", language: "ja" })).ok).toBe(true);
+    expect(f.store.config("language")).toBe("ja");
+    expect(seen).toEqual(["ja"]);
+    expect(await session.command({ kind: "setLanguage", language: "fr" })).toEqual({ ok: false, reason: "invalid_input" });
+    expect(f.store.config("language")).toBe("ja");
+  } finally { setLocale("zh-CN"); abort.abort(); await running; await f.close(); }
 });
 
 test("单项暂停：暂停当前执行项先中断步骤；暂停与继续其他项立即生效；全部开始清除队列与单项暂停", async () => {

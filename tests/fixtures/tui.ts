@@ -41,6 +41,7 @@ export function mockSnapshot(): TuiSnapshot {
     outputRoot: "C:\\Users\\demo\\Downloads\\PikPak-Test", stopping: false, connections: 4, activeFiles: { configured: 1, effective: 1, tier: "paid" }, localMissing: new Set<string>(), releasing: new Set<string>(),
     account: { id: "synthetic-account", name: "演示用户", email: "demo@example.com", scopes: ["account", "files:manage", "share", "cloud_download"],
       membership: { tier: "paid", type: "platinum", expire: Date.parse("2027-01-01T00:00:00Z") } },
+    language: "auto",
   };
 }
 
