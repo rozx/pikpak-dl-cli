@@ -16,6 +16,8 @@ import { RuntimeSession, type SessionEngine } from "./session";
 import type { LocalFileSystem } from "../platform/files";
 import { AccountTier } from "../pikpak/tier";
 import { t } from "../i18n";
+import { describeEvent, explain, type NameLookup } from "../tui/view-model";
+import type { PauseReason } from "../state/model";
 
 // 纯文本进度：同一文件只在跨过 10% 整数倍、或距上次输出满 30 秒且百分比变化时追加一行；开始下载已有单独提示。
 export function progressPrinter(now: () => number = Date.now): (event: RuntimeEvent) => string | null {
@@ -30,11 +32,19 @@ export function progressPrinter(now: () => number = Date.now): (event: RuntimeEv
     return print ? t().watch.progress(event.id, percent) : null;
   };
 }
+// 非进度事件的纯文本：常见事件用 watch 的标签并附上已翻译的原因；其余事件沿用界面事件区的文字；
+// 只用于唤醒调度的内部事件（released、release_finished 等）不输出。原因代码只在 status 的 JSON 中原样保留。
+const noNames: NameLookup = { share: () => null, file: () => null };
+export function eventLine(event: RuntimeEvent): string | null {
+  const text = t().watch, label = text.labels[event.type];
+  if (!label) return describeEvent(event, noNames)?.text ?? null;
+  const reason = event.reason ? (event.type === "paused" ? t().pauses[event.reason as PauseReason]?.reason : undefined) ?? explain(event.reason).reason : null;
+  return `${label}${event.id ? ` ${event.id}` : ""}${event.count !== undefined ? text.versions(event.count) : ""}${reason ? text.reason(reason) : ""}`;
+}
 const printProgress = progressPrinter();
 export function printEvent(event: RuntimeEvent): void {
-  if (event.type === "progress") { const line = printProgress(event); if (line) console.log(line); return; }
-  const text = t().watch;
-  console.log(`${text.labels[event.type] ?? event.type}${event.id ? ` ${event.id}` : ""}${event.count !== undefined ? text.versions(event.count) : ""}${event.reason ? text.reason(event.reason) : ""}`);
+  const line = event.type === "progress" ? printProgress(event) : eventLine(event);
+  if (line) console.log(line);
 }
 export async function watch(store: Store, output: string | null, signal: AbortSignal): Promise<void> {
   const accountId = store.config("active_account"); if (!accountId) throw new AppError("login_required");

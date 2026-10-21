@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { progressPrinter, sessionMessage } from "../src/runtime/watch";
+import { eventLine, progressPrinter, sessionMessage } from "../src/runtime/watch";
+import { setLocale } from "../src/i18n";
 
 const progress = (id: string, percent: number) => ({ type: "progress", id, bytes: BigInt(percent), size: 100n });
 
@@ -32,4 +33,18 @@ test("非进度事件不经过节流；会话事件保持原有纯文本提示",
   expect(sessionMessage({ type: "received", id: "s_a" })).toBe("已接收 s_a");
   expect(sessionMessage({ type: "started", reason: "clipboard_off" })).toContain("剪贴板监听已在设置中关闭");
   expect(sessionMessage({ type: "downloading", id: "f_a" })).toBe(null);
+});
+
+test("执行器事件的纯文本：原因按当前语言翻译，内部唤醒事件不输出，不带原始事件名", () => {
+  expect(eventLine({ type: "scanned", id: "s_a", count: 3 })).toBe("扫描完成 s_a，文件版本数 3");
+  expect(eventLine({ type: "file_waiting", id: "f_a", reason: "waiting_sync" })).toBe("文件等待处理 f_a，原因：云盘容量尚未反映刚释放的空间");
+  expect(eventLine({ type: "paused", reason: "local_space" })).toBe("执行已暂停，原因：本地磁盘空间不足");
+  expect(eventLine({ type: "released", id: "f_a" })).toBe(null);
+  expect(eventLine({ type: "release_finished" })).toBe(null);
+  expect(eventLine({ type: "copy_released", id: "f_a", bytes: 1024n })).toBe("f_a 的云端副本已释放（1.0 KB）");
+  try {
+    setLocale("ja");
+    expect(eventLine({ type: "attention", id: "f_a", reason: "network_failure" })).toBe("確認が必要 f_a、理由：ネットワーク接続が切れました");
+    expect(eventLine({ type: "released", id: "f_a" })).toBe(null);
+  } finally { setLocale("zh-CN"); }
 });
