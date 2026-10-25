@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { unlink } from "node:fs/promises";
 import { AppError } from "../errors";
 import type { Store, FileRecord, SourceComponent, DeliveryPlan } from "../state/store";
 import type { LocalDirectory, LocalFile, LocalFileSystem } from "../platform/files";
@@ -121,18 +120,15 @@ export class FileWorkspace {
       await directory.sync(); return handle;
     } catch (error) { await handle.close(); throw error; }
   }
-  // 删除已取消文件的未完成临时文件（improve-intake-feedback-and-cleanup 决策 3）：按目录句柄打开并核对身份，关闭后按核对过的目录路径删除。
-  // 临时文件或所在目录已不存在时视为已删除。
+  // 删除已取消文件的未完成临时文件（improve-intake-feedback-and-cleanup 决策 3）：相对已核对的目录句柄删除，
+  // 且只在它仍是任务库记录的那个文件时删除，不经过绝对路径。临时文件或所在目录已不存在时视为已删除。
   async discardTemporary(file: FileRecord): Promise<void> {
     const plan = this.store.deliveryPlan(this.accountId, file.id), delivery = this.store.delivery(this.accountId, file.id);
     if (!plan || !delivery || delivery.identity === null) return;
-    let handle: LocalFile;
-    try { handle = await (await this.directory(plan.tempParent)).file(plan.tempName, false, true); }
+    let removed: boolean;
+    try { removed = await (await this.directory(plan.tempParent)).removeFile(plan.tempName, { volume: delivery.volume ?? "", file: delivery.identity }); }
     catch (error) { if ((error as { code?: string }).code === "ENOENT") return; throw error; }
-    try {
-      if (!sameIdentity((await handle.info()).identity, { volume: delivery.volume ?? "", file: delivery.identity })) throw new AppError("needs_reconciliation");
-    } finally { await handle.close(); }
-    await unlink(join(this.paths.get(plan.tempParent)!, plan.tempName)).catch((error: { code?: string }) => { if (error.code !== "ENOENT") throw error; });
+    if (!removed) throw new AppError("needs_reconciliation");
   }
   async freeBytes(): Promise<bigint> { return (await this.directory("@root")).freeBytes(); }
   async targetPath(plan: DeliveryPlan): Promise<string> { await this.directory(plan.parent); return join(this.paths.get(plan.parent)!, plan.name); }

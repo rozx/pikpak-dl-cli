@@ -147,6 +147,22 @@ public static class PikpakLocalFiles {
       } finally { Marshal.FreeHGlobal(data); }
     } finally { file.Stream.Dispose(); }
   }
+  // 按目录句柄打开文件、核对身份，再对同一个句柄设置删除标记（FileDispositionInformation），不经过路径。
+  public static bool Remove(string directory, string name, string volume, string file) {
+    Entry entry=Open(Get(directory),name,false,false,false);
+    try {
+      FileInfo info=NativeInfo(entry.Handle);
+      string actual=Pair(info.IndexHigh,info.IndexLow).ToString()+":"+Pair((uint)info.Created.dwHighDateTime,(uint)info.Created.dwLowDateTime).ToString();
+      if (entry.Volume!=volume || actual!=file) return false;
+      IntPtr data=Marshal.AllocHGlobal(4);
+      try {
+        Marshal.WriteInt32(data,0,1);
+        IoStatus status; int result=NtSetInformationFile(entry.Handle,out status,data,1,13);
+        if (result<0) throw Failure(RtlNtStatusToDosError(result));
+      } finally { Marshal.FreeHGlobal(data); }
+      return true;
+    } finally { entry.Stream.Dispose(); }
+  }
   public static void Close(string key) {
     Entry entry; if (!entries.TryGetValue(key,out entry)) return;
     entries.Remove(key); if (entry.Stream!=null) entry.Stream.Dispose(); else entry.Handle.Dispose();
@@ -171,6 +187,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
       'truncate' { [PikpakLocalFiles]::Truncate([string]$r.id,[string]$r.size) }
       'sync' { [PikpakLocalFiles]::Sync([string]$r.id) }
       'publish' { $value = [PikpakLocalFiles]::Publish([string]$r.id,[string]$r.name,[string]$r.target,[string]$r.targetName) }
+      'remove' { $value = [PikpakLocalFiles]::Remove([string]$r.id,[string]$r.name,[string]$r.volume,[string]$r.file) }
       'close' { [PikpakLocalFiles]::Close([string]$r.id) }
       default { throw 'native-failure' }
     }

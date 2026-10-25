@@ -281,6 +281,19 @@ static napi_value leafRename(napi_env env, napi_callback_info info) {
   if (fsync(target->fd) != 0 || fsync(source->fd) != 0) return fileError(env);
   return boolean(env, true);
 }
+// 相对目录句柄删除普通文件：只有名字仍指向 inode 为 expected 的文件时才删除，否则返回 false。
+static napi_value leafUnlink(napi_env env, napi_callback_info info) {
+  napi_value values[3]; std::string name; uint64_t expected = 0; bool lossless = false;
+  if (!args(env, info, 3, values) || !component(env, values[1], name)
+    || napi_get_value_bigint_uint64(env, values[2], &expected, &lossless) != napi_ok || !lossless) return fail(env, "invalid-file-arguments");
+  Directory *directory = directoryArg(env, values[0]); if (!directory) return nullptr;
+  struct stat st;
+  if (fstatat(directory->fd, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) return fileError(env);
+  if (!S_ISREG(st.st_mode) || st.st_nlink != 1 || st.st_dev != directory->device) return fail(env, "unsafe-file");
+  if (static_cast<uint64_t>(st.st_ino) != expected) return boolean(env, false);
+  if (unlinkat(directory->fd, name.c_str(), 0) != 0 || fsync(directory->fd) != 0) return fileError(env);
+  return boolean(env, true);
+}
 static napi_value directoryFree(napi_env env, napi_callback_info info) {
   napi_value values[1]; if (!args(env, info, 1, values)) return nullptr;
   Directory *directory = directoryArg(env, values[0]); if (!directory) return nullptr;
@@ -304,7 +317,7 @@ static napi_value init(napi_env env, napi_value exports) {
     {"writeBoard", writeBoard}, {"releaseBoard", releaseBoard}, {"acquireLock", acquireLock},
     {"releaseLock", releaseLock}, {"identity", identity}, {"publish", publish},
     {"rootOpen", rootOpen}, {"directoryOpen", directoryOpen}, {"directoryIdentity", directoryIdentity},
-    {"leafOpen", leafOpen}, {"leafRename", leafRename}, {"directoryFree", directoryFree}, {"directorySync", directorySync}, {"directoryClose", directoryClose},
+    {"leafOpen", leafOpen}, {"leafRename", leafRename}, {"leafUnlink", leafUnlink}, {"directoryFree", directoryFree}, {"directorySync", directorySync}, {"directoryClose", directoryClose},
     {"stableDirectoryIdentity", stableDirectoryIdentity}, {"stableFileIdentity", stableFileIdentity},
   };
   for (const Method &method : methods) {

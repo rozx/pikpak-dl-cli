@@ -97,6 +97,9 @@ class WindowsDirectory implements LocalDirectory {
     if (!(target instanceof WindowsDirectory) || target.bridge !== this.bridge) throw Error("filesystem-mismatch");
     return await this.bridge.call({ action: "publish", id: this.id, name, target: target.id, targetName }) === true;
   }
+  async removeFile(name: string, expected: FileIdentity) {
+    return await this.bridge.call({ action: "remove", id: this.id, name, volume: expected.volume, file: expected.file }) === true;
+  }
   async sync() { await this.bridge.call({ action: "sync", id: this.id }); }
   async close() { await this.bridge.call({ action: "close", id: this.id }); }
 }

@@ -16,6 +16,7 @@ export interface MacNative {
   directoryClose(directory: object): void;
   leafOpen(directory: object, name: string, create: boolean, readOnly: boolean): number;
   leafRename(source: object, name: string, destination: object, target: string): boolean;
+  leafUnlink(directory: object, name: string, inode: bigint): boolean;
   stableDirectoryIdentity(directory: object): { volume: string; file: string };
   stableFileIdentity(fd: number): { volume: string; file: string };
 }

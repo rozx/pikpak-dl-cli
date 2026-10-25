@@ -94,10 +94,10 @@ bun run build bun-windows-x64                  # 单文件产物输出到 dist/�
 
 ### 平台适配（`platform/`）
 
-- `files.ts` 定义基于句柄的 `LocalDirectory` 与 `LocalFile` 接口。
+- `files.ts` 定义基于句柄的 `LocalDirectory` 与 `LocalFile` 接口。删除文件只用 `LocalDirectory.removeFile`：相对目录句柄、核对身份后才删除，不按绝对路径删除。
   - macOS 使用由 `native/macos.mm` 编译的 Node-API 模块。
   - Windows 使用常驻的 PowerShell 桥（`windows-files.ps1` 加 `process-bridge.ts`）做句柄相对的目录操作；文件身份核对通过后，数据读写改走 node:fs 文件描述符。
-  - Linux 经 `bun:ffi` 直接调用 glibc（`linux-files.ts`：`openat`、`statx`、`renameat2(RENAME_NOREPLACE)`、`fstatfs`），语义与 macOS 相同。
+  - Linux 经 `bun:ffi` 直接调用 glibc（`linux-files.ts`：`openat`、`statx`、`renameat2(RENAME_NOREPLACE)`、`unlinkat`、`fstatfs`），语义与 macOS 相同。
 - 剪贴板与凭据按平台实现：
   - 凭据在 macOS 与 Linux 上用 `Bun.secrets`（Keychain、Secret Service），Windows 用 PowerShell 脚本。
   - Linux 剪贴板调用 `wl-paste`、`xclip` 或 `xsel`，序号在文本变化时自增。
