@@ -141,7 +141,8 @@ test.if(nativeFiles)("本地空间不足和数据库失败暂停执行，不触�
     const lowSpace: LocalFileSystem = { close: async () => {}, root: async path => {
       const root = await localFiles().root(path);
       return { identity: () => root.identity(), child: (name, create) => root.child(name, create), file: (name, create, readOnly) => root.file(name, create, readOnly),
-        publish: (name, target, targetName) => root.publish(name, target, targetName), close: () => root.close(), sync: () => root.sync(), freeBytes: async () => 0n };
+        publish: (name, target, targetName) => root.publish(name, target, targetName), removeFile: (name, expected) => root.removeFile(name, expected),
+        close: () => root.close(), sync: () => root.sync(), freeBytes: async () => 0n };
     } };
     const engine = new Engine(f.store, f.secrets, new Drive(f.api, "account"), lowSpace, () => {}, f.fetch);
     await engine.step(signal); expect(f.store.paused("account")?.reason).toBe("local_space"); expect(f.state.saves).toBe(0);

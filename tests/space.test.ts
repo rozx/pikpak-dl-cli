@@ -132,7 +132,7 @@ test("手动释放：静默删除；服务端拒绝时副本保留、意图记�
   const f = await fixture();
   try {
     const done = f.add("done", true, true);
-    expect(f.store.releaseTargets("account", done.file.id)).toMatchObject({ reason: null, targets: [{ fileIds: [done.file.id], completed: true }] });
+    expect(f.store.releaseTargets("account", done.file.id)).toMatchObject({ reason: null, targets: [{ fileIds: [done.file.id], finished: true }] });
     f.state.quietDenied = true;
     expect(await f.manager.release(done.copyId, done.file.id)).toEqual({ outcome: "denied", reason: "permission_denied" });
     expect(f.store.copy("account", done.copyId).state).toBe("retained"); expect(f.store.paused("account")).toBe(null);
@@ -153,21 +153,21 @@ test("手动释放：未完成文件改回就绪并保留断点；非本工具�
     f.store.allocateDelivery("account", unfinished.file.id, join(f.root, "unfinished.part"), join(f.root, "unfinished.bin"));
     f.store.transition("account", unfinished.file.id, "ready"); f.store.transition("account", unfinished.file.id, "downloading");
     f.store.checkpoint("account", unfinished.file.id, 20n, "b".repeat(64)); f.store.pauseTask("account", unfinished.file.id);
-    expect(f.store.releaseTargets("account", unfinished.file.id).targets[0]?.completed).toBe(false);
+    expect(f.store.releaseTargets("account", unfinished.file.id).targets[0]?.finished).toBe(false);
     expect(await f.manager.release(unfinished.copyId, unfinished.file.id)).toEqual({ outcome: "released" });
     const after = f.store.file("account", unfinished.file.id);
     expect(after.state).toBe("ready"); expect(after.retries).toBe(0n); expect(f.store.persistedBytes("account", unfinished.file.id)).toBe(20n);
     expect(f.store.copyForFile("account", unfinished.file.id)).toBe(null);
 
     const unowned = f.add("unowned", true, false);
-    expect(f.store.releaseTargets("account", unowned.file.id)).toEqual({ targets: [], orphans: [], reason: "copy_not_owned" });
+    expect(f.store.releaseTargets("account", unowned.file.id)).toEqual({ targets: [], orphans: [], shares: [], reason: "copy_not_owned" });
     expect(await f.manager.release(unowned.copyId, unowned.file.id)).toEqual({ outcome: "skipped" });
     const busy = f.add("busy", false, true); f.store.beginOperation("account", busy.file.id, "restore");
-    expect(f.store.releaseTargets("account", busy.file.id)).toEqual({ targets: [], orphans: [], reason: "copy_in_use" });
+    expect(f.store.releaseTargets("account", busy.file.id)).toEqual({ targets: [], orphans: [], shares: [], reason: "copy_in_use" });
     const none = f.store.mergeFile(f.scan, { sourceId: "never-saved", size: 5n, gcid: "a".repeat(40), relativePath: "synthetic" });
-    expect(f.store.releaseTargets("account", none.id)).toEqual({ targets: [], orphans: [], reason: "copy_absent" });
+    expect(f.store.releaseTargets("account", none.id)).toEqual({ targets: [], orphans: [], shares: [], reason: "copy_absent" });
     // 分享范围：只列出可释放的副本；不能释放的不影响其他副本。
-    expect(f.store.releaseTargets("account", f.share.id)).toEqual({ targets: [], orphans: [], reason: "copy_in_use" });
+    expect(f.store.releaseTargets("account", f.share.id)).toEqual({ targets: [], orphans: [], shares: [], reason: "copy_in_use" });
     const other = f.add("other", true, true);
     expect(f.store.releaseTargets("account", f.share.id).targets.map(target => target.copy.id)).toEqual([other.copyId]);
     expect(f.state.deletions).toEqual(["unfinished"]);
@@ -209,6 +209,34 @@ test("删除任务记录：只删已完成且云端副本都已删除、没有�
     f.store.finishScan(f.scan, true);
     expect(f.store.forgetShare("account", f.share.id)).toBe("reference");
     expect(f.store.shareViews("account")).toEqual([]); expect(f.store.secretReferenced("reference")).toBe(false);
+  } finally { await f.close(); }
+});
+
+test("删除任务记录：已取消的文件可以释放后删除或直接删除；没有文件的已取消分享也可以删除", async () => {
+  const f = await fixture();
+  try {
+    const held = f.add("held", false, true), bare = f.store.mergeFile(f.scan, { sourceId: "never-saved", size: 5n, gcid: "b".repeat(40), relativePath: "synthetic" });
+    const running = f.add("running", false, true);
+    expect(f.store.forgettable("account", bare.id)).toBe(false); // 未取消的未完成文件不能删除
+    f.store.cancel("account", held.file.id); f.store.cancel("account", bare.id);
+    // 已取消、仍有副本的文件按“已结束”释放；没有副本的已取消文件可以直接删除记录。
+    expect(f.store.releaseTargets("account", held.file.id)).toMatchObject({ targets: [{ fileIds: [held.file.id], finished: true }], orphans: [], shares: [] });
+    expect(f.store.releaseTargets("account", bare.id)).toMatchObject({ targets: [], orphans: [bare.id], shares: [], reason: null });
+    expect(f.store.releaseTargets("account", running.file.id).targets[0]?.finished).toBe(false);
+    expect(await f.manager.release(held.copyId, held.file.id)).toEqual({ outcome: "released" });
+    expect(f.store.forgetFile("account", held.file.id)).toBe(true); expect(f.store.forgetFile("account", bare.id)).toBe(true);
+    // 扫描未完成、分享未取消时分享保留；取消后（没有文件、没有进行中的扫描）可以删除。
+    f.store.finishScan(f.scan, false, "scan_failed");
+    expect(f.store.forgettable("account", running.file.id)).toBe(false);
+    // 取消分享后其中未完成的文件也算已结束：释放副本后记录可以删除。
+    f.store.cancel("account", f.share.id);
+    expect(f.store.releaseTargets("account", null).targets.map(target => target.finished)).toEqual([true]);
+    expect(await f.manager.release(running.copyId, running.file.id)).toEqual({ outcome: "released" });
+    expect(f.store.shareForgettable("account", f.share.id)).toBe(false); // 还有文件
+    expect(f.store.forgetFile("account", running.file.id)).toBe(true);
+    expect(f.store.releaseTargets("account", f.share.id)).toMatchObject({ targets: [], orphans: [], shares: [f.share.id], reason: null });
+    expect(f.store.releaseTargets("account", null).shares).toEqual([f.share.id]);
+    expect(f.store.forgetShare("account", f.share.id)).toBe("reference"); expect(f.store.shareViews("account")).toEqual([]);
   } finally { await f.close(); }
 });
 

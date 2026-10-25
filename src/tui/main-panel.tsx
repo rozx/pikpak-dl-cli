@@ -11,9 +11,13 @@ export type Size = { columns: number; rows: number };
 export const MIN_COLUMNS = 60, MIN_ROWS = 15;
 const EVENT_LINES = 3;
 // 标题、横幅、三条分隔线、事件区与按键提示之外的高度留给列表；覆盖层（确认框、粘贴框）占用列表底部。
-export function panelLayout(size: Size, snapshot: TuiSnapshot, overlayLines = 0): { listHeight: number; eventLines: number } {
-  const eventLines = Math.min(EVENT_LINES, snapshot.events.length || 1);
-  return { listHeight: Math.max(1, size.rows - 1 - bannerLines(snapshot) - 3 - eventLines - 1 - overlayLines), eventLines };
+// 事件区折叠时最多 3 行，展开时最多半个窗口高（improve-intake-feedback-and-cleanup 决策 7），
+// 且不超过覆盖层与至少一行列表之外剩下的高度：展开后再打开确认框或粘贴框，整体仍放得进窗口。
+export function panelLayout(size: Size, snapshot: TuiSnapshot, overlayLines = 0, logExpanded = false): { listHeight: number; eventLines: number } {
+  const fixed = 1 + bannerLines(snapshot) + 3 + 1, room = size.rows - fixed - overlayLines - 1;
+  const limit = logExpanded ? Math.max(EVENT_LINES, Math.min(Math.floor(size.rows / 2), room)) : EVENT_LINES;
+  const eventLines = Math.min(limit, snapshot.events.length || 1);
+  return { listHeight: Math.max(1, size.rows - fixed - eventLines - overlayLines), eventLines };
 }
 // 名称之外：缩进与选中标记、状态图标、位置图标、大小与状态合计约 76 列。
 const nameWidthFor = (columns: number) => Math.max(18, Math.min(48, columns - 76));
@@ -109,11 +113,12 @@ export function RowLine({ row, selected, snapshot, theme, columns, frame = null 
 }
 
 const clock = (at: number) => new Date(at).toLocaleTimeString("zh-CN", { hour12: false });
-export function MainPanel({ snapshot, rows, selected, offset, size, theme, overlay, overlayLines = 0, keys }: {
+// logHint：在事件区上方的分隔线右侧提示 l 展开或收起事件区（只在主面板可用时显示）；按键提示行已没有空间。
+export function MainPanel({ snapshot, rows, selected, offset, size, theme, overlay, overlayLines = 0, logExpanded = false, logHint = false, keys }: {
   snapshot: TuiSnapshot; rows: ListRow[]; selected: number; offset: number; size: Size; theme: Theme;
-  overlay?: ReactNode; overlayLines?: number; keys: Array<[string, string]>;
+  overlay?: ReactNode; overlayLines?: number; logExpanded?: boolean; logHint?: boolean; keys: Array<[string, string]>;
 }) {
-  const { listHeight, eventLines } = panelLayout(size, snapshot, overlayLines);
+  const { listHeight, eventLines } = panelLayout(size, snapshot, overlayLines, logExpanded);
   const width = size.columns - 2;
   const events = snapshot.events.slice(-eventLines);
   // 暂停、停止中或系统暂停时执行器不在工作，图标保持静止。
@@ -131,7 +136,7 @@ export function MainPanel({ snapshot, rows, selected, offset, size, theme, overl
             <RowLine key={row.key} row={row} selected={offset + index === selected} snapshot={snapshot} theme={theme} columns={size.columns} frame={frame} />)}
       </Box>
       {overlay}
-      <Rule width={width} theme={theme} />
+      <Rule width={width} theme={theme} {...logHint && !snapshot.stopping ? { label: [{ text: "l", tone: "key" }, { text: ` ${t().keys.log(logExpanded)}`, tone: "muted" }] } : {}} />
       <Box flexDirection="column" height={eventLines}>
         {events.length === 0 ? <Text {...theme.paint("muted")}>{t().main.noEvents}</Text> : events.map((event, index) => (
           <Text key={`${event.at}-${index}`} wrap="truncate-end">

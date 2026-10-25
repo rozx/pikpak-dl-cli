@@ -190,7 +190,7 @@ function failingFiles(base: LocalFileSystem, failAt: number, error: Error): Loca
     child: async (name, create) => wrapDirectory(await directory.child(name, create)),
     file: async (name, create, readOnly) => wrapFile(await directory.file(name, create, readOnly)),
     publish: (name, target, targetName) => directory.publish(name, (target as LocalDirectory & { inner?: LocalDirectory }).inner ?? target, targetName),
-    sync: () => directory.sync(), close: () => directory.close(),
+    removeFile: (name, expected) => directory.removeFile(name, expected), sync: () => directory.sync(), close: () => directory.close(),
   });
   return { root: async path => wrapDirectory(await base.root(path)), close: async () => {} };
 }

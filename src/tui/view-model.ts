@@ -151,7 +151,7 @@ export function describeEvent(event: RuntimeEvent, names: NameLookup): LogLine |
   switch (event.type) {
     case "started": return { icon: "●", tone: "done", text: event.reason === "clipboard_off" ? text.startedClipboardOff : text.started };
     case "stopped": return { icon: "●", tone: "muted", text: text.stopped };
-    case "received": return { icon: "+", tone: "active", text: text.received(share(event.id)) };
+    case "received": return { icon: "+", tone: "active", text: event.reason === "clipboard" ? text.receivedClipboard(share(event.id)) : text.received(share(event.id)) };
     case "received_cancelled": return { icon: "⊘", tone: "muted", text: text.receivedCancelled(share(event.id)) };
     case "intake_issues": return { icon: "!", tone: "warning", text: text.intakeIssues };
     case "intake_failed": return { icon: "✗", tone: "error", text: text.intakeFailed };
@@ -172,6 +172,7 @@ export function describeEvent(event: RuntimeEvent, names: NameLookup): LogLine |
     case "copy_missing": return { icon: "♻", tone: "muted", text: text.copyMissing(file(event.id), event.reason === "removed") };
     case "task_removed": return { icon: "♻", tone: "muted", text: text.taskRemoved(file(event.id)) };
     case "share_removed": return { icon: "♻", tone: "muted", text: text.shareRemoved(share(event.id)) };
+    case "task_remove_failed": return { icon: "✗", tone: "error", text: text.taskRemoveFailed(file(event.id), why()) };
     case "copy_release_skipped": return { icon: "!", tone: "warning", text: text.releaseSkipped(file(event.id), why()) };
     case "copy_release_denied": return { icon: "✗", tone: "error",
       text: text.releaseDenied(file(event.id), explain("release_denied").reason, event.reason && /^[a-z0-9_-]{1,64}$/i.test(event.reason) ? event.reason : null) };

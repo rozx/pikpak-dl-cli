@@ -38,6 +38,8 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
   const [draft, setDraft] = useState("");
   const [pasteMessage, setPasteMessage] = useState<string | null>(null);
   const [setting, setSetting] = useState({ selected: 0, editing: false, error: null as string | null });
+  // 事件区展开状态只在本次界面中保存。
+  const [logExpanded, setLogExpanded] = useState(false);
 
   const rows = useMemo(() => buildRows({ shares: snapshot.shares, files: snapshot.files, expanded, userPaused: snapshot.userPaused, missing: snapshot.localMissing, releasing: snapshot.releasing }), [snapshot, expanded]);
   // 分组行不可选中：默认选第一个文件，没有文件时选第一个分享。
@@ -51,7 +53,7 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
   const selectedPaused = (item: Row) => item.kind === "share" ? item.share.paused
     : item.file.paused || !!snapshot.shares.find(share => share.id === item.shareId)?.paused;
   const overlayLines = screen.kind === "confirm" || screen.kind === "quit" ? CONFIRM_LINES : screen.kind === "paste" ? PASTE_BOX_LINES : screen.kind === "passCode" ? PASS_CODE_LINES : 0;
-  const { listHeight } = panelLayout(size, snapshot, overlayLines);
+  const { listHeight } = panelLayout(size, snapshot, overlayLines, logExpanded);
   // 选中某组的第一个分享并滚到顶部时，把该组的目录行一起显示出来。
   const scrolled = scrollOffset(offset, selected, listHeight, rows.length);
   const effectiveOffset = scrolled === selected && selected > 0 && listHeight > 1 && rows[selected - 1]?.kind === "group" ? scrolled - 1 : scrolled;
@@ -84,7 +86,8 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
     const name = target.kind === "share" ? t().quote(target.share.title ?? target.share.id) : target.name, text = t().dialogs;
     const preview = controller.releasePreview(id);
     if (!preview.ok) { controller.note({ icon: "!", tone: "warning", text: t().labelled(name, explain(preview.reason).reason) }); return; }
-    const title = preview.copies === 0 ? (target.kind === "share" ? text.removeShareRecords(name, preview.removed) : text.removeFileRecord(name))
+    // 没有文件的已取消分享只删除分享记录。
+    const title = preview.copies === 0 ? (target.kind === "share" ? target.counts.total === 0 ? text.removeShare(name) : text.removeShareRecords(name, preview.removed) : text.removeFileRecord(name))
       : target.kind === "share" ? text.releaseShare(name, preview.copies, formatBytes(preview.bytes)) : text.releaseFile(name, formatBytes(preview.bytes));
     setScreen({ kind: "confirm", action: "release", id, title, release: preview, back });
   };
@@ -139,6 +142,7 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
     } else if (input === "P") void run(anyPaused ? { kind: "startAll" } : { kind: "pauseQueue" });
     else if (input === "o") void open(row);
     else if (input === "a") { setDraft(""); setPasteMessage(null); setScreen({ kind: "paste" }); }
+    else if (input === "l") setLogExpanded(value => !value);
     else if (input === "s") { setSetting({ selected: 0, editing: false, error: null }); setScreen({ kind: "settings" }); }
     else if (input === "q") setScreen({ kind: "quit" });
   }, { isActive: screen.kind === "main" });
@@ -272,5 +276,6 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
     : screen.kind === "passCode" ? <PassCodeBox share={screen.title} draft={draft} message={pasteMessage} theme={theme} width={size.columns - 4} />
     : screen.kind === "paste" ? <PasteBox draft={draft} preview={controller.preview(draft)} outputRoot={snapshot.outputRoot} message={pasteMessage} theme={theme} width={size.columns - 4} />
     : undefined;
-  return <MainPanel snapshot={snapshot} rows={rows} selected={selected} offset={effectiveOffset} size={size} theme={theme} overlay={overlay} overlayLines={overlayLines} keys={keys} />;
+  return <MainPanel snapshot={snapshot} rows={rows} selected={selected} offset={effectiveOffset} size={size} theme={theme} overlay={overlay} overlayLines={overlayLines} logExpanded={logExpanded}
+    logHint={screen.kind === "main"} keys={keys} />;
 }

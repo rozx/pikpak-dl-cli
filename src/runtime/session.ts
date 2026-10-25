@@ -46,6 +46,8 @@ export class RuntimeSession {
   private halt: AbortController | null = null;
   private running: AbortSignal | null = null;
   private intake: { stop: AbortController; done: Promise<void> } | null = null;
+  // 每次开始监听后的第一份稳定快照只作为基线，不接收（improve-intake-feedback-and-cleanup 决策 4）。
+  private baseline = false;
   private wake: (() => void) | undefined;
   private stopped = false;
   constructor(private readonly store: Store, private readonly accountId: string, private readonly engine: SessionEngine,
@@ -140,7 +142,11 @@ export class RuntimeSession {
     const id = "id" in command ? { id: command.id } : {};
     try {
       let result: CommandResult = { ok: true, ids: [], issues: [] }, count: number | undefined, records: number | undefined;
-      if (command.kind === "retry") this.store.retry(account, command.id);
+      if (command.kind === "retry") {
+        // 正在释放或删除的任务不能重试：后台清理可能已删除已取消文件的临时文件，此时撤销取消会留下记录却丢了断点。
+        if (this.releasingTarget(command.id)) { this.emit({ type: "command_failed", reason: "task_releasing", ...id }); return { ok: false, reason: "task_releasing" }; }
+        this.store.retry(account, command.id);
+      }
       else if (command.kind === "cancel") {
         // 先写取消标记，调度不再选这些文件；再停下下载池中的目标（或该分享的文件），其他在途文件继续。
         this.store.cancel(account, command.id); this.store.recheckCancelledPause(account);
@@ -189,10 +195,16 @@ export class RuntimeSession {
     }
   }
 
+  // 目标文件，或目标分享中的任一文件，正在手动释放或删除。
+  private releasingTarget(id: string): boolean {
+    const releasing = new Set(this.engine.releasingFiles?.() ?? []);
+    if (!releasing.size) return false;
+    return id.startsWith("s_") ? this.store.fileViews(this.accountId, id).some(file => releasing.has(file.id)) : releasing.has(id);
+  }
   private watching(): boolean { return this.store.config("clipboard_watch") !== "0"; }
   private startIntake(): void {
     if (this.intake || !this.running) return;
-    const stop = new AbortController();
+    const stop = new AbortController(); this.baseline = true;
     const done = pollClipboard(this.clipboard, AbortSignal.any([this.running, stop.signal]), snapshot => this.receiveClipboard(snapshot),
       failed => this.emit({ type: failed ? "clipboard_unavailable" : "clipboard_recovered" }))
       // 监听异常由会话接收，避免未处理拒绝输出底层数据。
@@ -205,12 +217,15 @@ export class RuntimeSession {
     intake.stop.abort(); await intake.done;
   }
   private async receiveClipboard(snapshot: ClipboardSnapshot): Promise<void> {
-    this.report(await this.receiver.receive(snapshot));
+    if (this.baseline) { this.baseline = false; this.receiver.baseline(snapshot); return; }
+    this.report(await this.receiver.receive(snapshot), "clipboard");
     this.wake?.();
   }
-  private report(result: IntakeResult): void {
-    for (const id of result.ids) this.emit({ type: this.store.share(this.accountId, id).cancelled ? "received_cancelled" : "received", id });
-    if (result.issues.length) this.emit({ type: "intake_issues" });
+  // 剪贴板接收的事件带来源，界面据此写明来源并把窗口带到前台（决策 5、6）。
+  private report(result: IntakeResult, source?: "clipboard"): void {
+    const from = source ? { reason: source } : {};
+    for (const id of result.ids) this.emit({ type: this.store.share(this.accountId, id).cancelled ? "received_cancelled" : "received", id, ...from });
+    if (result.issues.length) this.emit({ type: "intake_issues", ...from });
     if (result.failure) { this.engine.blockPersistence(); this.emit({ type: "intake_failed", reason: result.failure }); }
   }
 }

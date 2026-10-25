@@ -11,6 +11,7 @@ const symbols = {
   fsync: { args: [FFIType.i32], returns: FFIType.i32 },
   statx: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
   renameat2: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+  unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
   fstatfs: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
   __errno_location: { args: [], returns: FFIType.ptr },
 } as const;
@@ -151,6 +152,15 @@ class LinuxDirectory implements LocalDirectory {
       fileError(reason);
     }
     check(c().fsync(target.fd)); check(c().fsync(this.fd));
+    return true;
+  }
+  // 身份核对与删除都相对本目录句柄进行；两步之间即使名字被替换，删除也不会越出这个已核对的目录。
+  async removeFile(name: string, expected: FileIdentity) {
+    this.check(); const encoded = component(name);
+    const info = status(this.fd, encoded, 0);
+    if ((info.mode & S_IFMT) !== S_IFREG || info.links !== 1 || info.device !== this.device) fail("unsafe-file");
+    if (identity(this.fd).volume !== expected.volume || `${info.inode}:${info.birth ?? "0:0"}` !== expected.file) return false;
+    check(c().unlinkat(this.fd, encoded, 0)); check(c().fsync(this.fd));
     return true;
   }
   async sync() { this.check(); check(c().fsync(this.fd)); }

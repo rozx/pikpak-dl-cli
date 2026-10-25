@@ -20,6 +20,10 @@ export class IntakeReceiver {
       passCode: share.passCode, outputRoot: this.outputRoot });
     return received.share.id;
   }
+  // 开始监听时剪贴板中已有的内容：只记下这次复制事件，不接收；之后序号变化才是新的复制事件。
+  baseline(snapshot: ClipboardSnapshot): void {
+    this.acceptedSequence = snapshot.sequence; this.partialSequence = null; this.partialShares.clear();
+  }
   async receive(snapshot: ClipboardSnapshot): Promise<IntakeResult> {
     if (snapshot.sequence === this.acceptedSequence) return { ids: [], issues: [], failure: null };
     if (snapshot.sequence !== this.partialSequence) { this.partialSequence = snapshot.sequence; this.partialShares.clear(); }

@@ -125,7 +125,7 @@ test("删除任务记录的事件描述", () => {
   expect(describeEvent({ type: "copy_missing", id: "f_1", reason: "removed" }, names)?.text).toBe("episode01.mkv 的云端副本已不在云盘中，任务记录已删除");
   expect(describeEvent({ type: "task_removed", id: "f_1" }, names)?.text).toBe("episode01.mkv 的任务记录已删除，本地文件保留");
   expect(describeEvent({ type: "share_removed", id: "s_1" }, names)?.text).toBe("分享「某某合集」的任务都已删除，已从列表移除");
-  expect(describeEvent({ type: "command", reason: "releaseAll", count: 3 }, names)?.text).toBe("正在释放全部已完成任务的 3 个云端副本");
-  expect(describeEvent({ type: "command", reason: "releaseAll", count: 0, size: 2n }, names)?.text).toBe("正在删除 2 个已完成任务的记录");
+  expect(describeEvent({ type: "command", reason: "releaseAll", count: 3 }, names)?.text).toBe("正在释放已完成与已取消任务的 3 个云端副本");
+  expect(describeEvent({ type: "command", reason: "releaseAll", count: 0, size: 2n }, names)?.text).toBe("正在删除 2 个已完成或已取消任务的记录");
   expect(describeEvent({ type: "command", reason: "releaseCopy", id: "f_1", count: 0, size: 1n }, names)?.text).toBe("正在删除 episode01.mkv 的任务记录");
 });

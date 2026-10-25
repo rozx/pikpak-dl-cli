@@ -16,6 +16,8 @@ export interface LocalDirectory {
   child(name: string, create: boolean): Promise<LocalDirectory>;
   file(name: string, create: boolean, readOnly?: boolean): Promise<LocalFile>;
   publish(sourceName: string, target: LocalDirectory, targetName: string): Promise<boolean>;
+  // 按目录句柄删除本目录中的普通文件，且只在它仍是 expected 那个文件时删除；身份不符时不删除并返回 false，不存在时抛出 ENOENT。
+  removeFile(name: string, expected: FileIdentity): Promise<boolean>;
   sync(): Promise<void>;
   close(): Promise<void>;
 }

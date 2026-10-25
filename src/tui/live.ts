@@ -20,10 +20,14 @@ export type LiveOptions = {
   quota: () => Promise<{ usage: bigint; limit: bigint }>; localFree: () => Promise<bigint>;
   stop: () => void; forceExit: () => void; open?: (path: string) => Promise<OpenResult>; tier?: () => Tier;
   account?: () => Promise<AccountView>;
+  // 从剪贴板接收到分享时把终端窗口带到前台（improve-intake-feedback-and-cleanup 决策 6）。
+  activate?: () => void;
   // 本地文件是否存在：true 存在，false 不存在，null 无法判断（保留上次结果）。
   exists?: (path: string) => Promise<boolean | null>;
   now?: () => number; snapshotMs?: number; flushMs?: number; quotaMs?: number; localMs?: number; maxEvents?: number;
 };
+// 剪贴板接收的结果事件；一次复制可能产生多条，窗口只前置一次。
+const intakeEvents = new Set(["received", "received_cancelled", "intake_issues"]);
 // 这些事件前后会发生转存、回收或交付，云盘容量随之变化。
 const quotaEvents = new Set(["downloading", "completed", "waiting_space", "copy_released", "release_finished"]);
 const pathExists = (path: string): Promise<boolean | null> =>
@@ -48,6 +52,7 @@ export class LiveController implements TuiController {
   private clipboard: TuiSnapshot["clipboard"];
   private stopping = false;
   private completed = 0;
+  private activatedAt = -Infinity;
   private unsubscribe: (() => void) | null = null;
   private readonly now: () => number;
   constructor(private readonly options: LiveOptions) {
@@ -112,6 +117,10 @@ export class LiveController implements TuiController {
       if (event.type === "clipboard_recovered" || (event.type === "started" && event.reason !== "clipboard_off")) this.clipboard = this.options.store.config("clipboard_watch") === "0" ? "off" : "on";
       if (event.type === "started" && event.reason === "clipboard_off") this.clipboard = "off";
       if (quotaEvents.has(event.type)) void this.refreshQuota();
+      if (event.reason === "clipboard" && intakeEvents.has(event.type) && this.now() - this.activatedAt >= 1000) {
+        this.activatedAt = this.now();
+        try { this.options.activate?.(); } catch { /* 前置窗口只是提示，失败不影响接收。 */ }
+      }
       // 文件完成发布后本地剩余空间随之变化，立即刷新，不等下一个周期。
       if (event.type === "completed") { void this.refreshLocal(); void this.refreshPresence(); }
       const line = describeEvent(event, { share: id => this.shareTitle(id), file: id => this.fileTitle(id) });

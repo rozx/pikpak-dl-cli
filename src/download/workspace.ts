@@ -8,8 +8,9 @@ import { safeName, foldedName, shortId, nodeId, taskName } from "./names";
 export class FileWorkspace {
   private readonly opened = new Map<string, LocalDirectory>();
   private readonly paths = new Map<string, string>();
-  private constructor(private readonly store: Store, private readonly accountId: string, private readonly shareId: string) {}
-  static async open(store: Store, accountId: string, shareId: string, fs: LocalFileSystem): Promise<FileWorkspace> {
+  // recreate 为 false 时只打开已有目录：不建任务目录，也不重建被删除的目录（只用于清理）。
+  private constructor(private readonly store: Store, private readonly accountId: string, private readonly shareId: string, private readonly recreate: boolean) {}
+  static async open(store: Store, accountId: string, shareId: string, fs: LocalFileSystem, recreate = true): Promise<FileWorkspace> {
     for (let attempt = 0; ; attempt++) {
       const share = store.share(accountId, shareId);
       const root = await fs.root(share.outputRoot);
@@ -18,18 +19,18 @@ export class FileWorkspace {
       // 打开期间默认目录可能被修改，这个尚未开始的分享随之迁移到新目录：按新目录重新打开。
       // 这里的比较与写入根目录身份之间没有 await，迁移不会插在两者之间。
       if (store.share(accountId, shareId).outputRoot !== share.outputRoot && attempt < 3) { await root.close(); continue; }
-      return FileWorkspace.bind(store, accountId, share, root, identity);
+      return FileWorkspace.bind(store, accountId, share, root, identity, recreate);
     }
   }
   private static async bind(store: Store, accountId: string, share: { id: string; outputRoot: string; remoteId: string }, root: LocalDirectory,
-    identity: Awaited<ReturnType<LocalDirectory["identity"]>>): Promise<FileWorkspace> {
-    const shareId = share.id, workspace = new FileWorkspace(store, accountId, shareId);
+    identity: Awaited<ReturnType<LocalDirectory["identity"]>>, recreate: boolean): Promise<FileWorkspace> {
+    const shareId = share.id, workspace = new FileWorkspace(store, accountId, shareId, recreate);
     try {
       store.bindRoot(accountId, shareId, identity);
       workspace.opened.set("@root", root); workspace.paths.set("@root", share.outputRoot);
       // 任务目录用去掉后缀的任务名，只在与已有目录重名时写作“名称 (2)”（add-task-controls 决策 9）。
       // 临时文件放在目标文件旁边，不再建 .pikpak-staging；旧计划里的 @temp 目录仍按记录打开。
-      await workspace.ensure("@share", "@root", taskName(store.shareTitle(accountId, shareId) ?? "PikPak"), true);
+      if (recreate) await workspace.ensure("@share", "@root", taskName(store.shareTitle(accountId, shareId) ?? "PikPak"), true);
       return workspace;
     } catch (error) { const registered = workspace.opened.has("@root"); await workspace.close(); if (!registered) await root.close(); throw error; }
   }
@@ -65,7 +66,7 @@ export class FileWorkspace {
     let child: LocalDirectory;
     try { child = await parent.child(record.name, false); }
     catch (error) {
-      if ((error as { code?: string }).code !== "ENOENT" || this.store.pendingPublication(this.accountId, this.shareId)) throw error;
+      if ((error as { code?: string }).code !== "ENOENT" || !this.recreate || this.store.pendingPublication(this.accountId, this.shareId)) throw error;
       child = await parent.child(record.name, true);
       try {
         await parent.sync(); const current = await child.identity();
@@ -118,6 +119,16 @@ export class FileWorkspace {
       else this.store.bindTemporary(this.accountId, file.id, identity);
       await directory.sync(); return handle;
     } catch (error) { await handle.close(); throw error; }
+  }
+  // 删除已取消文件的未完成临时文件（improve-intake-feedback-and-cleanup 决策 3）：相对已核对的目录句柄删除，
+  // 且只在它仍是任务库记录的那个文件时删除，不经过绝对路径。临时文件或所在目录已不存在时视为已删除。
+  async discardTemporary(file: FileRecord): Promise<void> {
+    const plan = this.store.deliveryPlan(this.accountId, file.id), delivery = this.store.delivery(this.accountId, file.id);
+    if (!plan || !delivery || delivery.identity === null) return;
+    let removed: boolean;
+    try { removed = await (await this.directory(plan.tempParent)).removeFile(plan.tempName, { volume: delivery.volume ?? "", file: delivery.identity }); }
+    catch (error) { if ((error as { code?: string }).code === "ENOENT") return; throw error; }
+    if (!removed) throw new AppError("needs_reconciliation");
   }
   async freeBytes(): Promise<bigint> { return (await this.directory("@root")).freeBytes(); }
   async targetPath(plan: DeliveryPlan): Promise<string> { await this.directory(plan.parent); return join(this.paths.get(plan.parent)!, plan.name); }

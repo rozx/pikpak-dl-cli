@@ -156,6 +156,8 @@ test("手动提交与剪贴板同一规则，不与先前输入拼接，也不�
   session.subscribe(event => { if (event.type === "received") received.push(event.id!); });
   const abort = new AbortController(); const running = session.run(abort.signal);
   try {
+    // 启动时已有的内容只作基线；新的复制事件才接收。
+    await until(() => clip.state.reads > 0); clip.state.sequence = "2";
     await until(() => received.length === 1);
     const share = f.store.findShare("account", "synthetic-manual")!;
     expect((await loadShareAccess(f.secrets, share.secretRef, "account", share.remoteId)).passCode).toBe("");
@@ -218,13 +220,56 @@ test("队列暂停期间仍接收并保存新分享；重新复制已取消的�
   session.subscribe(event => events.push(event));
   const abort = new AbortController(); const running = session.run(abort.signal);
   try {
+    await until(() => clip.state.reads > 0); clip.state.sequence = "2";
     await until(() => events.some(event => event.type === "received"));
     const share = f.store.findShare("account", "synthetic-paused")!;
     expect(share.cancelled).toBe(false);
     expect((await session.command({ kind: "cancel", id: share.id })).ok).toBe(true);
-    clip.state.sequence = "2"; await until(() => events.some(event => event.type === "received_cancelled"));
+    clip.state.sequence = "3"; await until(() => events.some(event => event.type === "received_cancelled"));
+    expect(events.filter(event => event.type.startsWith("received"))).toEqual([{ type: "received", id: share.id, reason: "clipboard" }, { type: "received_cancelled", id: share.id, reason: "clipboard" }]);
     expect(f.store.share("account", share.id).cancelled).toBe(true);
     expect(f.store.config("queue_paused")).toBe("1");
+  } finally { abort.abort(); await running; await f.close(); }
+});
+
+test("开始监听时剪贴板已有的分享不接收：启动与重新开启监听都只记基线，之后的复制照常接收", async () => {
+  const f = await storeFixture(); const events: RuntimeEvent[] = [];
+  const clip = fakeClipboard("https://mypikpak.com/s/synthetic-leftover");
+  const session = new RuntimeSession(f.store, "account", fakeEngine(async () => { await Bun.sleep(5); return false; }).engine, f.receiver, clip.clipboard);
+  session.subscribe(event => events.push(event));
+  const abort = new AbortController(); const running = session.run(abort.signal);
+  try {
+    await until(() => clip.state.reads >= 3);
+    expect(f.store.findShare("account", "synthetic-leftover")).toBe(null); expect(events.some(event => event.type === "received")).toBe(false);
+    // 同样的文本再次复制（序号变化）就是新的复制事件。
+    clip.state.sequence = "2"; await until(() => events.some(event => event.type === "received"));
+    const share = f.store.findShare("account", "synthetic-leftover")!;
+    // 监听关闭期间复制的文本，重新开启后不接收。
+    expect((await session.command({ kind: "setClipboardWatch", enabled: false })).ok).toBe(true);
+    clip.state.sequence = "3"; clip.state.text = "https://mypikpak.com/s/synthetic-while-off";
+    const reads = clip.state.reads;
+    expect((await session.command({ kind: "setClipboardWatch", enabled: true })).ok).toBe(true);
+    await until(() => clip.state.reads >= reads + 3);
+    expect(f.store.findShare("account", "synthetic-while-off")).toBe(null);
+    clip.state.sequence = "4"; await until(() => !!f.store.findShare("account", "synthetic-while-off"));
+    expect(f.store.share("account", share.id).requestedRevision).toBe(share.requestedRevision);
+  } finally { abort.abort(); await running; await f.close(); }
+});
+
+test("正在释放或删除的任务不能重试：文件本身或所在分享中的文件在释放中时拒绝，取消标记保持", async () => {
+  const f = await storeFixture(); const events: RuntimeEvent[] = [];
+  const fake = fakeEngine(async () => { await Bun.sleep(5); return false; }); let releasing: string[] = [f.second.id];
+  const session = new RuntimeSession(f.store, "account", { ...fake.engine, releasingFiles: () => releasing }, f.receiver, fakeClipboard().clipboard);
+  session.subscribe(event => events.push(event));
+  const abort = new AbortController(); const running = session.run(abort.signal);
+  try {
+    f.store.cancel("account", f.share.id);
+    for (const id of [f.second.id, f.share.id]) expect(await session.command({ kind: "retry", id })).toEqual({ ok: false, reason: "task_releasing" });
+    expect(f.store.share("account", f.share.id).cancelled).toBe(true); expect(f.store.file("account", f.second.id).cancelled).toBe(true);
+    expect(events.filter(event => event.type === "command_failed").map(event => event.reason)).toEqual(["task_releasing", "task_releasing"]);
+    // 释放结束后可以重试。
+    releasing = [];
+    expect((await session.command({ kind: "retry", id: f.share.id })).ok).toBe(true); expect(f.store.share("account", f.share.id).cancelled).toBe(false);
   } finally { abort.abort(); await running; await f.close(); }
 });
 

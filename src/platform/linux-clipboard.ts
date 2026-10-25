@@ -32,6 +32,7 @@ export function clipboardCommands(environment: Record<string, string | undefined
 }
 
 // Linux 没有系统级剪贴板变更计数，序号在文本与上次不同的时候加一；重复复制同一段文字不算新事件。
+// 因此开始监听时记下的基线文本，用户再复制同样的文字也不会被接收（见 docs/clipboard.md 的说明）。
 export class LinuxClipboard implements Clipboard {
   private sequence = 0;
   private last: string | null | undefined;

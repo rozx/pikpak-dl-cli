@@ -11,7 +11,7 @@
 <text x="34.8 43.2 51.6 60 68.4 76.8" y="60.12" fill="#ffffff" font-weight="700">PikPak</text>
 <text x="93.6 102" y="60.12" fill="#ffffff" font-weight="700">DL</text>
 <text x="118.8 127.2 135.6" y="60.12" fill="#ffffff" font-weight="700">CLI</text>
-<text x="169.2 177.6 186 194.4 202.8 211.2" y="60.12" fill="#6b7089">v0.9.1</text>
+<text x="169.2 177.6 186 194.4 202.8 211.2 219.6" y="60.12" fill="#6b7089">v0.10.0</text>
 <text x="421.2" y="60.12" fill="#9ece6a">●</text>
 <text x="438 446.4 454.8 463.2 471.6 480" y="60.12" fill="#c8cee0">Signed</text>
 <text x="496.8 505.2" y="60.12" fill="#c8cee0">in</text>
@@ -382,20 +382,9 @@
 <path d="M790.8 325.8H799.2" stroke="#6b7089" stroke-width="1.2" fill="none"/>
 <path d="M799.2 325.8H807.6" stroke="#6b7089" stroke-width="1.2" fill="none"/>
 <path d="M807.6 325.8H816" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M816 325.8H824.4" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M824.4 325.8H832.8" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M832.8 325.8H841.2" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M841.2 325.8H849.6" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M849.6 325.8H858" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M858 325.8H866.4" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M866.4 325.8H874.8" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M874.8 325.8H883.2" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M883.2 325.8H891.6" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M891.6 325.8H900" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M900 325.8H908.4" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M908.4 325.8H916.8" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M916.8 325.8H925.2" stroke="#6b7089" stroke-width="1.2" fill="none"/>
-<path d="M925.2 325.8H933.6" stroke="#6b7089" stroke-width="1.2" fill="none"/>
+<text x="824.4" y="330.12" fill="#ffd580">l</text>
+<text x="841.2 849.6 858 866.4 874.8 883.2" y="330.12" fill="#6b7089">expand</text>
+<text x="900 908.4 916.8" y="330.12" fill="#6b7089">log</text>
 <path d="M933.6 325.8H942" stroke="#6b7089" stroke-width="1.2" fill="none"/>
 <path d="M942 325.8H950.4" stroke="#6b7089" stroke-width="1.2" fill="none"/>
 <text x="26.4 34.8 43.2 51.6 60 68.4 76.8 85.2" y="348.12" fill="#6b7089">21:04:12</text>

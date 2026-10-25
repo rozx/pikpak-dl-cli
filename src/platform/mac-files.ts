@@ -1,5 +1,6 @@
 import { close, fstat, fsync, ftruncate, read, write, type BigIntStats } from "node:fs";
-import type { LocalDirectory, LocalFile, LocalFileSystem } from "./files";
+import { sameIdentity, type LocalDirectory, type LocalFile, type LocalFileSystem } from "./files";
+import type { FileIdentity } from "./types";
 import { macNative } from "./macos";
 
 function position(value: bigint): number {
@@ -47,6 +48,17 @@ class MacDirectory implements LocalDirectory {
   async publish(sourceName: string, target: LocalDirectory, targetName: string) {
     this.check(); if (!(target instanceof MacDirectory)) throw Error("filesystem-mismatch"); target.check();
     return macNative().leafRename(this.handle, sourceName, target.handle, targetName);
+  }
+  // 先按目录句柄只读打开、核对稳定身份并取得 inode，再由原生模块相对同一目录句柄核对 inode 后删除。
+  async removeFile(name: string, expected: FileIdentity) {
+    this.check();
+    const fd = macNative().leafOpen(this.handle, name, false, true);
+    let inode: bigint;
+    try {
+      if (!sameIdentity(macNative().stableFileIdentity(fd), expected)) return false;
+      inode = (await new Promise<BigIntStats>((resolve, reject) => { fstat(fd, { bigint: true }, (error, info) => error ? reject(error) : resolve(info)); })).ino;
+    } finally { await new Promise<void>(resolve => close(fd, () => resolve())); }
+    return macNative().leafUnlink(this.handle, name, inode);
   }
   async sync() { this.check(); macNative().directorySync(this.handle); }
   async close() { if (!this.closed) { this.closed = true; macNative().directoryClose(this.handle); } }

@@ -102,7 +102,7 @@ https://mypikpak.com/s/synthetic-demo
 Password: demo
 ```
 
-Share text copied from any PikPak client works in every language it supports, and common synonyms such as `Pass code` or `Access code` are recognized too; see [Copying share text](docs/en/clipboard.md) for the details. If the pass code is missing or wrong, the share row shows the reason in red; select the share and press Enter to type the pass code and scan again.
+Share text copied from any PikPak client works in every language it supports, and common synonyms such as `Pass code` or `Access code` are recognized too; see [Copying share text](docs/en/clipboard.md) for the details. Text that is already on the clipboard when the program starts is not picked up, so copy after the program is running. Linux only counts changed text as a new copy, so copy something else before copying the same text again, or press `a` to paste it. When a share is received from the clipboard, the terminal window comes to the front and the event area says it came from the clipboard. If the pass code is missing or wrong, the share row shows the reason in red; select the share and press Enter to type the pass code and scan again.
 
 The new task appears right away. It is then scanned, saved, downloaded and verified, and the files end up in a folder named after the share title inside your download folder. You can also press `a` to open the paste box, which shows in real time how many shares and pass codes it found:
 
@@ -133,9 +133,10 @@ The icon in front of a name shows where the file is now:
 | `r` | Retry the selected file or share |
 | `c` | Cancel (asks for confirmation). Local files, saved progress and cloud copies are kept; press `r` later to resume |
 | `p` / `P` | Pause or resume the selected item; pause all, or start all when something is paused. Paused state survives a restart |
-| `x` / `X` | Release the cloud copies of the selected item; release the cloud copies of all completed tasks (both ask for confirmation) |
+| `x` / `X` | Release the cloud copies of the selected item, or delete a cancelled task; release the cloud copies of all completed and cancelled tasks (both ask for confirmation) |
 | `o` | Open the download folder |
 | `a` | Paste share text |
+| `l` | Expand or collapse the event area |
 | `s` | Settings |
 | `q` / `Ctrl+C` | Quit (asks for confirmation). Downloads stop at a safe point and save their progress; press `Ctrl+C` again to quit immediately |
 
@@ -153,9 +154,10 @@ Press Enter on a file to see its details: the full path and size, the reason and
 
 By default you do not need to manage cloud space. Only when the next file does not fit does the program reclaim completed copies, oldest first, and it stops as soon as there is enough room. Nothing is deleted early while there is enough cloud space.
 
-To free space right away, select a file or share and press `x`, or press `X` to release the copies of all completed tasks. The confirmation dialog shows what will be released and how much space it frees. Deletion is permanent (nothing goes to the trash), and local files are kept:
+To free space right away, select a file or share and press `x`, or press `X` to release the copies of all completed and cancelled tasks. The confirmation dialog shows what will be released and how much space it frees. Deletion is permanent (nothing goes to the trash), and local files are kept:
 
 - When the copies of a completed task are released, its record is deleted too, and it disappears from the list.
+- Cancelled tasks work the same way: once their copies are released (or if none are left in the cloud), the record and the unfinished temporary file (`.pikpak-part`) are deleted. Press `x` to remove a cancelled task from the list.
 - When the copy of an unfinished file is released, its progress is kept. Resuming saves it from the share again, which fails if the share has expired.
 - Files being downloaded and copies not created by this tool are not released; the interface only explains why.
 
