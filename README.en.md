@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="docs/images/icon.svg" alt="" width="120">
+</p>
+
+<p align="center">
   <img src="docs/images/en/logo.svg" alt="PikPak DL CLI" width="560">
 </p>
 

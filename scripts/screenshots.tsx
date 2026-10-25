@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ReactNode } from "react";
+import { iconSvg } from "./icon";
 
 // chalk 在导入时检测颜色支持：先强制开启真彩色，再动态导入界面模块。
 process.env.FORCE_COLOR = "3";
@@ -329,6 +330,9 @@ const shots: Array<{ name: string; size: Size; tree: (size: Size) => ReactNode; 
 
 const requested = process.argv.slice(2);
 for (const target of requested) if (!(LOCALES as readonly string[]).includes(target)) throw Error(`不支持的语言：${target}`);
+// 图标不含文字，各语言共用一份。
+await Bun.write(join(imagesDir, "icon.svg"), iconSvg());
+console.log("docs/images/icon.svg");
 for (const target of (requested.length ? requested : LOCALES) as Locale[]) {
   setLocale(target); demo = demos[target];
   const outDir = target === "zh-CN" ? imagesDir : join(imagesDir, target), shown = target === "zh-CN" ? "docs/images" : `docs/images/${target}`;

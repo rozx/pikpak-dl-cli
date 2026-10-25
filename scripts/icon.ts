@@ -125,6 +125,23 @@ function bitmap(size: number, pixels: Uint8Array): Uint8Array {
 
 export const iconImage = (size: number) => (size >= 256 ? png : bitmap)(size, render(size));
 
+// README 标题用的矢量图标：取 24×24 的图，同一行相邻的同色格合并成一个矩形，圆角与位图一致。
+export function iconSvg(size = 240): string {
+  const art = arts.at(-1)!, cells = art.length;
+  const hex = (key: string) => `#${palette[key]!.map(channel => channel.toString(16).padStart(2, "0")).join("")}`;
+  const background = hex("."), radius = cells / 5;
+  const runs = art.flatMap((row, y) => [...row.matchAll(/(.)\1*/g)]
+    .filter(run => hex(run[1]!) !== background)
+    .map(run => `<rect x="${run.index}" y="${y}" width="${run[0].length}" height="1" fill="${hex(run[1]!)}"/>`));
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${cells} ${cells}" role="img" aria-label="PikPak DL CLI">`,
+    `<clipPath id="corner"><rect width="${cells}" height="${cells}" rx="${radius}"/></clipPath>`,
+    `<rect width="${cells}" height="${cells}" rx="${radius}" fill="${background}"/>`,
+    `<g clip-path="url(#corner)" shape-rendering="crispEdges">`, ...runs, `</g>`,
+    `</svg>`, "",
+  ].join("\n");
+}
+
 export function iconIco(): Uint8Array {
   const images = sizes.map(iconImage);
   const directory = new Uint8Array(6 + 16 * images.length);
