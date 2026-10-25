@@ -68,7 +68,7 @@ bun run build bun-windows-x64                  # 单文件产物输出到 dist/�
 - 副本可以被删除的前提是 `pikpak/ownership.ts` 的创建证据，即转存任务、精确来源映射、时序与 GCID；删除前还要用 `unchangedOwnedCopy` 重新核对远端元数据。删除有两条路径：
   - 自动回收 `SpaceManager.ensure`：按需触发、最旧优先，并等待云盘容量反映释放。
   - 手动或全部释放 `SpaceManager.releaseMany`：批量删除，以副本不可见为准确认。
-  - 两者共用 `Engine` 内的云端操作锁。已完成任务的副本释放后，任务记录随之删除（`store.forgetFile` / `forgetShare`）。
+  - 两者共用 `Engine` 内的云端操作锁。已完成或已取消任务的副本释放后，任务记录随之删除（`store.forgetFile` / `forgetShare`）；已取消文件先经 `FileWorkspace.discardTemporary` 核对并删除未完成的临时文件。
 
 ### 会话与引擎
 
@@ -101,6 +101,8 @@ bun run build bun-windows-x64                  # 单文件产物输出到 dist/�
 - 剪贴板与凭据按平台实现：
   - 凭据在 macOS 与 Linux 上用 `Bun.secrets`（Keychain、Secret Service），Windows 用 PowerShell 脚本。
   - Linux 剪贴板调用 `wl-paste`、`xclip` 或 `xsel`，序号在文本变化时自增。
+  - 每次开始监听后的第一份快照只作基线（`IntakeReceiver.baseline`），不接收启动前已有的内容。
+- `window.ts` 在剪贴板接收时把终端窗口带到前台，尽力而为：Windows 经 `bun:ffi` 激活可见的控制台或 Windows Terminal 窗口（不可见的伪控制台窗口跳过），macOS 用 `open -b $__CFBundleIdentifier`，Linux X11 用 `xdotool`。
 - 发行产物的入口是 `src/main.ts`：`Bun.build` 编译后入口模块的 `import.meta.main` 为 false，所以不能依赖 `cli.ts` 自身的入口判断。
 
 ### 界面（`tui/`）
