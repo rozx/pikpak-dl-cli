@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Text, useInput, usePaste, useWindowSize } from "ink";
 import type { TuiController } from "./controller";
 import { createTheme, type Theme } from "./theme";
-import { buildRows, explain, scrollOffset, selectable, type Row } from "./view-model";
+import { buildRows, explain, needsPassCode, scrollOffset, selectable, type Row } from "./view-model";
 import { MainPanel, MIN_COLUMNS, MIN_ROWS, panelLayout, type Size } from "./main-panel";
-import { AccountPage, CONFIRM_LINES, ConfirmDialog, DetailPage, PASTE_BOX_LINES, PasteBox, SETTINGS_ITEMS, SettingsPage } from "./pages";
+import { AccountPage, CONFIRM_LINES, ConfirmDialog, DetailPage, PASS_CODE_LINES, PASTE_BOX_LINES, PassCodeBox, PasteBox, SETTINGS_ITEMS, SettingsPage } from "./pages";
 import { MAX_CONNECTIONS } from "../download/connections";
 import { MAX_ACTIVE_FILES } from "../runtime/active-files";
 import { formatBytes } from "./format";
@@ -22,6 +22,7 @@ function releaseDetail(preview: Extract<ReleasePreview, { ok: true }>): string {
 }
 
 type Screen = { kind: "main" } | { kind: "detail"; fileId: string } | { kind: "settings" } | { kind: "account"; confirming: boolean } | { kind: "paste" }
+  | { kind: "passCode"; shareId: string; title: string }
   | { kind: "confirm"; action: "cancel" | "release" | "releaseAll"; id: string; title: string; release?: Extract<ReleasePreview, { ok: true }>; back: Screen } | { kind: "quit" };
 
 // 账号页的登出与重新授权交给启动流程处理：先停止执行，再进入登录页（improve-account-login 决策 6）。
@@ -49,7 +50,7 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
   const anyPaused = snapshot.userPaused || snapshot.shares.some(item => item.paused) || Object.values(snapshot.files).some(files => files.some(file => file.paused));
   const selectedPaused = (item: Row) => item.kind === "share" ? item.share.paused
     : item.file.paused || !!snapshot.shares.find(share => share.id === item.shareId)?.paused;
-  const overlayLines = screen.kind === "confirm" || screen.kind === "quit" ? CONFIRM_LINES : screen.kind === "paste" ? PASTE_BOX_LINES : 0;
+  const overlayLines = screen.kind === "confirm" || screen.kind === "quit" ? CONFIRM_LINES : screen.kind === "paste" ? PASTE_BOX_LINES : screen.kind === "passCode" ? PASS_CODE_LINES : 0;
   const { listHeight } = panelLayout(size, snapshot, overlayLines);
   // 选中某组的第一个分享并滚到顶部时，把该组的目录行一起显示出来。
   const scrolled = scrollOffset(offset, selected, listHeight, rows.length);
@@ -121,7 +122,10 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
       setExpanded(value => ({ ...value, [shareId]: false })); setSelectedKey(`s:${shareId}`);
     } else if (key.rightArrow && row?.kind === "share") setExpanded(value => ({ ...value, [row.share.id]: true }));
     else if (key.return && row) {
-      if (row.kind === "share") setExpanded(value => ({ ...value, [row.share.id]: !row.expanded }));
+      // 等待提取码的分享按 Enter 补填提取码，其他分享展开或折叠。
+      if (row.kind === "share" && needsPassCode(row.share)) {
+        setDraft(""); setPasteMessage(null); setScreen({ kind: "passCode", shareId: row.share.id, title: t().quote(row.share.title ?? row.share.id) });
+      } else if (row.kind === "share") setExpanded(value => ({ ...value, [row.share.id]: !row.expanded }));
       else setScreen({ kind: "detail", fileId: row.file.id });
     } else if (input === "r" && row) void run({ kind: "retry", id: row.kind === "share" ? row.share.id : row.file.id });
     else if (input === "c") askCancel(row, { kind: "main" });
@@ -178,6 +182,23 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
     else if (key.backspace || key.delete) setDraft(value => value.slice(0, -1));
     else if (input && !key.ctrl && !key.meta) setDraft(value => value + input);
   }, { isActive: screen.kind === "paste" });
+
+  // 提取码先在本地校验格式；保存失败时留在输入框说明原因。
+  const submitPassCode = async () => {
+    if (screen.kind !== "passCode") return;
+    const value = draft.normalize("NFKC").trim();
+    if (!/^[A-Za-z0-9]{1,32}$/.test(value)) { setPasteMessage(t().passCode.invalid); return; }
+    const result = await run({ kind: "setPassCode", id: screen.shareId, passCode: value });
+    if (!result.ok) { setPasteMessage(t().passCode.rejected(explain(result.reason).reason)); return; }
+    setDraft(""); setScreen({ kind: "main" });
+  };
+  usePaste(text => { setDraft(value => value + text.replace(/\s+/g, "")); setPasteMessage(null); }, { isActive: screen.kind === "passCode" });
+  useInput((input, key) => {
+    if (key.escape) { setDraft(""); setScreen({ kind: "main" }); }
+    else if (key.return) void submitPassCode();
+    else if (key.backspace || key.delete) { setDraft(value => value.slice(0, -1)); setPasteMessage(null); }
+    else if (input && !key.ctrl && !key.meta) { setDraft(value => value + input.replace(/\s+/g, "")); setPasteMessage(null); }
+  }, { isActive: screen.kind === "passCode" });
 
   const saveOutput = async () => {
     const result = await controller.command({ kind: "setOutputRoot", path: draft.trim() });
@@ -238,9 +259,9 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
   const key = t().keys, dialog = t().dialogs;
   const keys: Array<[string, string]> = screen.kind === "confirm" ? [["y", key.confirm], ["n", key.back]]
     : screen.kind === "quit" ? [["y", key.quit], ["n", key.back]]
-    : screen.kind === "paste" ? [["Enter", key.submit], ["Esc", key.cancel]]
+    : screen.kind === "paste" || screen.kind === "passCode" ? [["Enter", key.submit], ["Esc", key.cancel]]
     // 单项与全部合写，与“x/X 释放/全部”一致；有暂停时 P 是全部开始，写明“全部开始”。
-    : [["Enter", key.details], ["r", key.retry], ["c", key.cancel], ["p/P", key.pauseAll(!!row && selectedPaused(row), anyPaused)],
+    : [["Enter", row?.kind === "share" && needsPassCode(row.share) ? key.passCode : key.details], ["r", key.retry], ["c", key.cancel], ["p/P", key.pauseAll(!!row && selectedPaused(row), anyPaused)],
       ["x/X", key.releaseAll], ["o", key.folder], ["a", key.paste], ["s", key.settings], ["q", key.quit]];
   const overlay = screen.kind === "confirm" && screen.release
     ? <ConfirmDialog heading={screen.release.copies ? dialog.releaseHeading : dialog.removeHeading} title={screen.title} confirm={screen.release.copies ? dialog.releaseConfirm : dialog.removeConfirm}
@@ -248,6 +269,7 @@ export function TuiApp({ controller, theme = createTheme(), size: fixedSize, onA
     : screen.kind === "confirm"
     ? <ConfirmDialog heading={dialog.cancelHeading} title={screen.title} detail={dialog.cancelDetail} confirm={dialog.cancelConfirm} theme={theme} />
     : screen.kind === "quit" ? <ConfirmDialog heading={dialog.quitHeading} title={dialog.quitTitle} detail={dialog.quitDetail} confirm={dialog.quitConfirm} theme={theme} />
+    : screen.kind === "passCode" ? <PassCodeBox share={screen.title} draft={draft} message={pasteMessage} theme={theme} width={size.columns - 4} />
     : screen.kind === "paste" ? <PasteBox draft={draft} preview={controller.preview(draft)} outputRoot={snapshot.outputRoot} message={pasteMessage} theme={theme} width={size.columns - 4} />
     : undefined;
   return <MainPanel snapshot={snapshot} rows={rows} selected={selected} offset={effectiveOffset} size={size} theme={theme} overlay={overlay} overlayLines={overlayLines} keys={keys} />;

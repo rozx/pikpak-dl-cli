@@ -149,7 +149,9 @@ export const zhCN = {
   looks: { releasing: "释放中", completedMissing: "已完成 · 本地文件已不在", cancelled: "已取消", paused: "已暂停" },
 
   reasons: {
-    access_required: { reason: "分享需要提取码，或提取码不正确", advice: "重新复制包含链接和提取码的完整分享文本，或按 a 粘贴。" },
+    access_required: { reason: "分享需要提取码，或提取码不正确", advice: "选中该分享按 Enter 输入提取码，或重新复制包含链接和提取码的完整分享文本。" },
+    pass_code_missing: { reason: "分享需要提取码", advice: "选中该分享按 Enter 输入提取码，或重新复制包含链接和提取码的完整分享文本。" },
+    pass_code_wrong: { reason: "提取码错误", advice: "选中该分享按 Enter 输入正确的提取码，或重新复制包含链接和提取码的完整分享文本。" },
     cloud_space: { reason: "云盘剩余空间不足，正在等待可回收的空间", advice: "等待已完成文件的云端副本被回收，或在 PikPak 中自行清理空间。" },
     waiting_sync: { reason: "云盘容量尚未反映刚释放的空间", advice: "稍后会自动重新检查，无需操作。" },
     copy_version_changed: { reason: "云盘中的副本已被改动，与分享中的版本不一致", advice: "按 r 重试，将重新转存分享中的文件。" },
@@ -166,6 +168,7 @@ export const zhCN = {
     rate_limited: { reason: "请求过于频繁，PikPak 暂时限流", advice: "稍后会自动重试，无需操作。" },
     remote_copy_missing: { reason: "云盘中的副本已不存在", advice: "按 r 重试，将重新转存。" },
     remote_request_failed: { reason: "PikPak 请求失败", advice: "稍后按 r 重试。" },
+    scan_failed: { reason: "扫描失败", advice: "按 r 重试。" },
     scan_retry_exhausted: { reason: "扫描多次失败", advice: "检查网络后按 r 重试。" },
     share_unavailable: { reason: "分享已失效或无法访问", advice: "确认分享链接仍然有效。" },
     traffic_quota: { reason: "PikPak 下载流量额度已用完", advice: "额度恢复后会自动继续。" },
@@ -247,6 +250,7 @@ export const zhCN = {
     connections: "下载连接数已更新，从下一个文件开始生效",
     activeFiles: "同时下载的文件数已更新，名额空出时生效",
     language: (name: string) => `界面语言已切换为 ${name}`,
+    passCode: (target: string) => `已更新 ${target} 的提取码，重新扫描`,
     failed: (reason: string) => `操作失败：${reason}`,
   },
 
@@ -266,6 +270,7 @@ export const zhCN = {
     stopping: "正在停止并保存进度…（再按 Ctrl+C 立即退出）",
     groupShares: (count: number) => `${count} 个分享`,
     scanning: "扫描中…",
+    enterPassCode: "按 Enter 输入提取码",
     completed: (done: number, total: number) => `${done}/${total} 完成`,
     counts: { downloading: "下载中", transferring: "转存中", paused: "暂停", queued: "排队", failed: "失败", waiting: "等待", cancelled: "已取消", releasing: "释放中", missing: "本地缺失" },
     shareCancelled: " · 分享已取消",
@@ -274,7 +279,7 @@ export const zhCN = {
   },
 
   keys: {
-    details: "详情", retry: "重试", cancel: "取消",
+    details: "详情", passCode: "提取码", retry: "重试", cancel: "取消",
     // 单项与全部合写：有暂停时 P 是全部开始，写明“全部开始”。
     pauseAll: (selectedPaused: boolean, anyPaused: boolean) => `${selectedPaused ? "继续" : "暂停"}/${anyPaused ? "全部开始" : "全部"}`, releaseAll: "释放/全部", folder: "目录",
     paste: "粘贴", settings: "设置", quit: "退出", confirm: "确认", back: "返回", submit: "提交", releaseCopy: "释放云端副本", openFolder: "打开目录",
@@ -309,6 +314,14 @@ export const zhCN = {
     releaseUnfinished: "将永久删除 PikPak 中的副本，断点保留；继续时从分享重新转存，分享失效将无法完成。",
     releaseMixed: "永久删除 PikPak 中的副本：已完成的删除任务记录，未完成的保留断点、继续时从分享重新转存。",
     openFailed: (reason: string) => `无法打开目录：${reason}`,
+  },
+
+  passCode: {
+    title: (share: string) => `输入${share}的提取码`,
+    label: "提取码：",
+    hint: "提交后重新扫描该分享",
+    invalid: "提取码应为 1 到 32 位字母或数字",
+    rejected: (reason: string) => `未能保存：${reason}`,
   },
 
   paste: {

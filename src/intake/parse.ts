@@ -74,8 +74,17 @@ function uniqueCode(values: string[]): string | null {
   return unique.length <= 1 && unique.every(value => /^[A-Za-z0-9]{1,32}$/.test(value)) ? unique[0] ?? "" : null;
 }
 
-export function parseShares(text: string): ParseResult {
-  if (text.length > 65536) return { shares: [], issues: text.includes("https://mypikpak.com/s/") ? ["input_too_large"] : [] };
+// 单独一行的提取码（fix-share-pass-code-waiting 决策 1）：去掉空白行后只剩一行链接与一行字母数字时，
+// 补上标注再按常规规则解析；其他没有标注的文字不当成提取码。
+function loneCode(text: string): string {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (lines.length !== 2 || !/^https?:\/\/\S+$/i.test(lines[0]!) || !/^[A-Za-z0-9]{4,32}$/.test(lines[1]!.normalize("NFKC"))) return text;
+  return `${lines[0]}\n提取码：${lines[1]}`;
+}
+
+export function parseShares(input: string): ParseResult {
+  if (input.length > 65536) return { shares: [], issues: input.includes("https://mypikpak.com/s/") ? ["input_too_large"] : [] };
+  const text = loneCode(input);
   const result: ParseResult = { shares: [], issues: [] };
   for (const block of blocks(text)) {
     const links: Link[] = [];

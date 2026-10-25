@@ -35,6 +35,12 @@ export function explain(reason: string | null): Explanation {
 }
 export const pauseExplanation = (pause: Pause): Explanation => t().pauses[pause.reason];
 
+// 分享扫描的状态（fix-share-pass-code-waiting 决策 3、4）：只有待扫描与扫描中算扫描中；扫描失败且原因是提取码时可以按 Enter 补填。
+export const shareScanning = (share: Pick<ShareView, "scanStatus">) => share.scanStatus === "pending" || share.scanStatus === "active";
+const passCodeReasons: readonly string[] = ["pass_code_missing", "pass_code_wrong", "access_required"];
+export const needsPassCode = (share: Pick<ShareView, "scanStatus" | "lastError" | "cancelled">) =>
+  !share.cancelled && share.scanStatus === "failed" && passCodeReasons.includes(share.lastError ?? "");
+
 // 完成优先于取消，取消优先于暂停；失败与等待附带原因。
 export function fileLook(file: FileView, options: { userPaused: boolean; sharePaused?: boolean; missing?: boolean; releasing?: boolean }): Look {
   // 正在释放云端副本的文件优先显示“释放中”，带动态图标。
@@ -173,6 +179,7 @@ export function describeEvent(event: RuntimeEvent, names: NameLookup): LogLine |
     case "command": {
       const kind = event.reason;
       if (kind === "retry") return { icon: "↻", tone: "active", text: text.retry(target(event.id)) };
+      if (kind === "setPassCode") return { icon: "↻", tone: "active", text: text.passCode(target(event.id)) };
       if (kind === "cancel") return { icon: "⊘", tone: "muted", text: text.cancel(target(event.id)) };
       if (kind === "pauseTask") return { icon: "⏸", tone: "warning", text: text.pauseTask(target(event.id)) };
       if (kind === "resumeTask") return { icon: "▶", tone: "active", text: text.resumeTask(target(event.id)) };

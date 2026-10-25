@@ -52,6 +52,21 @@ test("手写分享说明中的同义词与常见写法", () => {
   for (const text of variants) expect({ text, ...parseShares(text) }).toEqual({ text, shares: share("w2k9"), issues: [] });
 });
 
+test("只有链接与单独一行的提取码时识别该提取码", () => {
+  // 用户样本的形状：链接、空行、只含不间断空格的行、空行、提取码。
+  expect(parseShares(`${link}\n\n \n\nw2k9`)).toEqual({ shares: share("w2k9"), issues: [] });
+  expect(parseShares(`${link}\r\nw2k9\r\n`)).toEqual({ shares: share("w2k9"), issues: [] });
+  expect(parseShares(`  ${link}  \n\n  ｗ２ｋ９ `).shares).toEqual(share("w2k9"));
+  // 其他形状不猜测：多出说明文字、链接行带文字、码太短或含非字母数字、多个链接。
+  expect(parseShares(`${link}\nMovie2024\n说明`).shares).toEqual(share(""));
+  expect(parseShares(`分享 ${link}\n\nw2k9`).shares).toEqual(share(""));
+  expect(parseShares(`${link}\n\nw2k`).shares).toEqual(share(""));
+  expect(parseShares(`${link}\n\nmovie.mkv`).shares).toEqual(share(""));
+  expect(parseShares(`${link}\nhttps://mypikpak.com/s/VOsynthetic02`).shares.map(item => item.passCode)).toEqual(["", ""]);
+  // 链接自带的码与单独一行的码矛盾时提示歧义。
+  expect(parseShares(`${link}?pwd=abcd\n\nw2k9`).issues).toEqual(["ambiguous_code"]);
+});
+
 test("不是提取码的密码不会被当成提取码：解压、账号、保险箱与 Wi-Fi 密码，以及普通单词", () => {
   expect(parseShares(`${link}\n提取码：w2k9\n解压密码：www.example.com`).shares).toEqual(share("w2k9"));
   expect(parseShares(`${link}\n密码：w2k9\n压缩包密码：zip123`).shares).toEqual(share("w2k9"));

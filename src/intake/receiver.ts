@@ -44,4 +44,14 @@ export class IntakeReceiver {
     }
     return { ids, issues: parsed.issues, failure: null };
   }
+  // 界面中为选中的分享补填提取码（fix-share-pass-code-waiting 决策 4）：目标由用户明确指定，按重新复制完整文本处理。
+  async receivePassCode(id: string, passCode: string): Promise<IntakeResult> {
+    const value = passCode.normalize("NFKC").trim();
+    if (!/^[A-Za-z0-9]{1,32}$/.test(value)) throw new AppError("invalid_input");
+    const share = this.store.share(this.accountId, id);
+    try {
+      await acceptShare(this.store, this.secrets, { accountId: this.accountId, shareId: share.remoteId, passCode: value, outputRoot: share.outputRoot });
+      return { ids: [share.id], issues: [], failure: null };
+    } catch (error) { return { ids: [], issues: [], failure: failureOf(error) }; }
+  }
 }

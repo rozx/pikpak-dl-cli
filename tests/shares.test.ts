@@ -7,6 +7,7 @@ import { Store } from "../src/state/store";
 import { acceptShare } from "../src/auth/share-access";
 import { scanShare, requireShareAccess } from "../src/pikpak/shares";
 import type { PikpakClient } from "../src/pikpak/client";
+import { rejection } from "./fixtures/rejection";
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "pikpak-scan-test-")); const path = join(directory, "db.sqlite");
@@ -98,10 +99,22 @@ test("分页循环停止；不可验证条目保留原因，不妨碍其他可�
 test("空分享、不可用分享和缺码状态不同", async () => {
   expect(() => requireShareAccess({ share_status: "PASS_CODE_EMPTY" })).toThrow("access_required");
   expect(() => requireShareAccess({ share_status: "PASS_CODE_ERROR" })).toThrow("access_required");
+  // 缺码与错码分开记录原因。
+  for (const [status, reason] of [["PASS_CODE_EMPTY", "pass_code_missing"], ["PASS_CODE_ERROR", "pass_code_wrong"]] as const) {
+    try { requireShareAccess({ share_status: status }); } catch (error) { expect(error).toMatchObject({ code: "access_required", reason }); }
+  }
   expect(() => requireShareAccess({ share_status: "UNAVAILABLE" })).toThrow("share_unavailable");
   const f = await fixture();
   try { expect(await scanShare(f.store, f.secrets, fake(() => ({ share_status: "OK", files: [] })), f.scan)).toEqual({ files: 0, issues: 0, complete: true }); }
   finally { await f.close(); }
+});
+
+test("提取码错误时分享的扫描记为失败，原因为 pass_code_wrong", async () => {
+  const f = await fixture();
+  try {
+    expect(await rejection(scanShare(f.store, f.secrets, fake(() => ({ share_status: "PASS_CODE_ERROR" })), f.scan))).toMatchObject({ reason: "pass_code_wrong" });
+    expect(f.store.share("account", f.share.id)).toMatchObject({ scanStatus: "failed", lastError: "pass_code_wrong" });
+  } finally { await f.close(); }
 });
 
 test("v1 升级前生成受保护备份，保留原任务且备份不能直接执行", async () => {

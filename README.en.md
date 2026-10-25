@@ -102,7 +102,7 @@ https://mypikpak.com/s/synthetic-demo
 Password: demo
 ```
 
-Share text copied from any PikPak client works in every language it supports, and common synonyms such as `Pass code` or `Access code` are recognized too; see [Copying share text](docs/en/clipboard.md) for the details.
+Share text copied from any PikPak client works in every language it supports, and common synonyms such as `Pass code` or `Access code` are recognized too; see [Copying share text](docs/en/clipboard.md) for the details. If the pass code is missing or wrong, the share row shows the reason in red; select the share and press Enter to type the pass code and scan again.
 
 The new task appears right away. It is then scanned, saved, downloaded and verified, and the files end up in a folder named after the share title inside your download folder. You can also press `a` to open the paste box, which shows in real time how many shares and pass codes it found:
 
@@ -129,7 +129,7 @@ The icon in front of a name shows where the file is now:
 
 | Key | Action |
 | --- | --- |
-| `↑` `↓` / `←` `→` / `Enter` | Select; collapse or expand a share; view file details |
+| `↑` `↓` / `←` `→` / `Enter` | Select; collapse or expand a share; view file details; type the pass code for a share waiting for one |
 | `r` | Retry the selected file or share |
 | `c` | Cancel (asks for confirmation). Local files, saved progress and cloud copies are kept; press `r` later to resume |
 | `p` / `P` | Pause or resume the selected item; pause all, or start all when something is paused. Paused state survives a restart |

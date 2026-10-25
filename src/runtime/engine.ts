@@ -240,7 +240,7 @@ export class Engine {
       } catch (error) {
         if (signal.aborted) return false;
         if (error instanceof ShareScanError || (error instanceof AppError && error.code === "share_access_required")) {
-          this.event({ type: "scan_waiting", id: scan.shareId, reason: error instanceof ShareScanError ? error.code : "access_required" });
+          this.event({ type: "scan_waiting", id: scan.shareId, reason: error instanceof ShareScanError ? error.reason : "access_required" });
         } else if (error instanceof AppError && ["authorization_failed", "login_required", "credentials_unavailable", "account_mismatch"].includes(error.code)) this.pause("authentication");
         else if (error instanceof ProviderError) {
           if (error.status === 429) this.store.rateLimit(account, error.retryAfterMs ?? 60000);
