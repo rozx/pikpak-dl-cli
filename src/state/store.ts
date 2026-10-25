@@ -23,8 +23,8 @@ export type Operation = { id: string; accountId: string; fileId: string; kind: "
 export type CopyRecord = { id: string; remoteId: string; parentId: string; size: bigint; gcid: string; ownership: "unverified" | "created";
   state: "retained" | "deleting" | "deleted" | "protected"; operationId: string; evidence: CreationEvidence | null };
 export type ReclaimCandidate = CopyRecord & { fileId: string; completedAt: bigint };
-// 手动释放的对象：一份保留中的副本与引用它的文件；completed 表示这些文件都已完成。
-export type ReleaseTarget = { copy: CopyRecord; fileIds: string[]; completed: boolean };
+// 手动释放的对象：一份保留中的副本与引用它的文件；finished 表示这些文件都已完成或已取消（释放后删除记录）。
+export type ReleaseTarget = { copy: CopyRecord; fileIds: string[]; finished: boolean };
 export type Delivery = { fileId: string; tempPath: string; targetPath: string; checkpoint: bigint; prefixSha256: string | null;
   publishAttempt: bigint; volume: string | null; identity: string | null; sha256: string | null; verification: string | null; completedAt: bigint | null;
   ranges: RangeCheckpoint | null };
@@ -41,8 +41,10 @@ const shareColumns = "id, account_id AS accountId, remote_id AS remoteId, output
 const fileColumns = "id, account_id AS accountId, share_id AS shareId, source_id AS sourceId, gcid, size, relative_path AS relativePath, state, retries, cancelled, last_error AS lastError";
 const fileValue = (row: FileRow): FileRecord => ({ ...row, size: BigInt(row.size), cancelled: row.cancelled === 1n });
 const timestamp = () => BigInt(Date.now());
-// 可以删除记录的文件（别名 f）：已完成；引用的副本都已删除；它转存产生的副本没有被其他文件引用；没有未核对的操作；没有账号暂停指向它。
-const forgettable = `f.state='completed'
+// 已完成，或文件本身或所属分享已取消（别名 f）。
+const finished = `(f.state='completed' OR f.cancelled=1 OR EXISTS(SELECT 1 FROM shares s WHERE s.id=f.share_id AND s.cancelled=1))`;
+// 可以删除记录的文件（别名 f）：已完成或已取消；引用的副本都已删除；它转存产生的副本没有被其他文件引用；没有未核对的操作；没有账号暂停指向它。
+const forgettable = `${finished}
   AND NOT EXISTS(SELECT 1 FROM copy_references r JOIN copies c ON c.id=r.copy_id WHERE r.file_id=f.id AND c.state<>'deleted')
   AND NOT EXISTS(SELECT 1 FROM copies c JOIN operations o ON o.id=c.operation_id JOIN copy_references r ON r.copy_id=c.id WHERE o.file_id=f.id AND r.file_id<>f.id)
   AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.file_id=f.id AND o.status<>'confirmed')
@@ -401,10 +403,10 @@ export class Store {
       AND NOT EXISTS(SELECT 1 FROM copy_references r JOIN files f ON f.id=r.file_id WHERE r.copy_id=c.id AND (f.state='publishing'
         OR EXISTS(SELECT 1 FROM operations o WHERE o.file_id=f.id AND o.status<>'confirmed' AND o.kind<>'delete')))`, copyId, accountId);
   }
-  // 文件或分享中保留着的副本，以及云端已没有副本、可以直接删除记录的已完成文件（orphans）；
-  // 两者都没有时给出原因（正在使用优先于非本工具创建，最后是没有副本）。
+  // 文件或分享中保留着的副本，云端已没有副本、可以直接删除记录的已完成或已取消文件（orphans），
+  // 以及没有文件记录、可以直接删除的已取消分享（shares）；都没有时给出原因（正在使用优先于非本工具创建，最后是没有副本）。
   // id 为 null 时范围是整个账号（全部释放）。
-  releaseTargets(accountId: string, id: string | null): { targets: ReleaseTarget[]; orphans: string[]; reason: string | null } {
+  releaseTargets(accountId: string, id: string | null): { targets: ReleaseTarget[]; orphans: string[]; shares: string[]; reason: string | null } {
     const shareScope = id?.startsWith("s_") ?? false;
     if (id !== null) { if (shareScope) this.share(accountId, id); else this.file(accountId, id); }
     const scope = id === null ? "1=1" : shareScope ? "f.share_id=?" : "f.id=?", bindings = id === null ? [] : [id];
@@ -415,14 +417,18 @@ export class Store {
       const copy = this.copy(accountId, row.id);
       if (copy.ownership !== "created" || !copy.evidence) { notOwned = true; continue; }
       if (!this.canRelease(accountId, copy.id)) { busy = true; continue; }
-      const files = this.all<{ id: string; state: FileState }>("SELECT f.id,f.state FROM copy_references r JOIN files f ON f.id=r.file_id WHERE r.copy_id=? ORDER BY f.rowid", copy.id);
-      targets.push({ copy, fileIds: files.map(file => file.id), completed: files.every(file => file.state === "completed") });
+      const files = this.all<{ id: string; finished: bigint }>(`SELECT f.id,${finished} AS finished FROM copy_references r JOIN files f ON f.id=r.file_id WHERE r.copy_id=? ORDER BY f.rowid`, copy.id);
+      targets.push({ copy, fileIds: files.map(file => file.id), finished: files.every(file => file.finished === 1n) });
     }
     const orphans = this.all<{ id: string }>(`SELECT f.id FROM files f WHERE f.account_id=? AND ${scope}
       AND ${forgettable} ORDER BY f.rowid`, accountId, ...bindings).map(row => row.id);
-    return { targets, orphans, reason: targets.length || orphans.length ? null : busy ? "copy_in_use" : notOwned ? "copy_not_owned" : "copy_absent" };
+    const shares = id !== null && !shareScope ? [] : this.all<{ id: string }>(`SELECT s.id FROM shares s WHERE s.account_id=? AND ${id === null ? "1=1" : "s.id=?"}
+      AND s.cancelled=1 AND NOT EXISTS(SELECT 1 FROM files WHERE share_id=s.id) AND NOT EXISTS(SELECT 1 FROM scans WHERE share_id=s.id AND status='active')
+      ORDER BY s.rowid`, accountId, ...bindings).map(row => row.id);
+    return { targets, orphans, shares, reason: targets.length || orphans.length || shares.length ? null : busy ? "copy_in_use" : notOwned ? "copy_not_owned" : "copy_absent" };
   }
-  // 释放后删除任务记录（add-task-controls 决策 7）：已完成、云端已没有本工具管理的副本、没有未核对操作的文件。本地文件不动。
+  // 释放后删除任务记录（add-task-controls 决策 7）：已完成或已取消、云端已没有本工具管理的副本、没有未核对操作的文件。
+  // 本地文件不动；已取消文件的临时文件由调用者先删除。
   forgettable(accountId: string, fileId: string): boolean {
     return !!this.get(`SELECT f.id FROM files f WHERE f.id=? AND f.account_id=? AND ${forgettable}`, fileId, accountId);
   }
@@ -437,10 +443,10 @@ export class Store {
       return true;
     });
   }
-  // 分享的文件记录都已删除、扫描已完整完成且没有待执行的重新扫描时，分享记录也删除。
+  // 分享的文件记录都已删除、没有进行中的扫描，且分享已取消或扫描已完整完成且没有待执行的重新扫描时，分享记录也删除。
   shareForgettable(accountId: string, shareId: string): boolean {
     const share = this.share(accountId, shareId);
-    return share.scanStatus === "complete" && share.requestedRevision === share.attemptedRevision
+    return (share.cancelled || share.scanStatus === "complete" && share.requestedRevision === share.attemptedRevision)
       && !this.get("SELECT id FROM files WHERE share_id=? LIMIT 1", shareId) && !this.get("SELECT id FROM scans WHERE share_id=? AND status='active'", shareId);
   }
   // 返回分享的访问资料引用，由调用者在不再被引用时回收；不满足条件时返回 null。

@@ -173,3 +173,16 @@ test("账号资料在启动与打开账号页时读取；读取失败保留上�
     expect(reads).toBe(3); expect(f.live.snapshot().account?.name).toBe("用户2");
   } finally { await f.close(); }
 });
+
+test("从剪贴板接收时把终端窗口带到前台（1 秒内至多一次），事件区写明来自剪贴板；手动粘贴不前置", async () => {
+  let now = 0, activations = 0; const f = await fixture({ now: () => now, flushMs: 0, activate: () => { activations++; } });
+  try {
+    f.live.start();
+    f.emit({ type: "received", id: f.share.id });
+    expect(activations).toBe(0); expect(f.live.snapshot().events.at(-1)?.text).toBe("已接收分享「某某合集」");
+    f.emit({ type: "received", id: f.share.id, reason: "clipboard" }); f.emit({ type: "intake_issues", reason: "clipboard" });
+    expect(activations).toBe(1); expect(f.live.snapshot().events.at(-2)?.text).toBe("已从剪贴板接收分享「某某合集」");
+    now = 1500; f.emit({ type: "received_cancelled", id: f.share.id, reason: "clipboard" });
+    expect(activations).toBe(2);
+  } finally { await f.close(); }
+});

@@ -46,6 +46,8 @@ export class RuntimeSession {
   private halt: AbortController | null = null;
   private running: AbortSignal | null = null;
   private intake: { stop: AbortController; done: Promise<void> } | null = null;
+  // 每次开始监听后的第一份稳定快照只作为基线，不接收（improve-intake-feedback-and-cleanup 决策 4）。
+  private baseline = false;
   private wake: (() => void) | undefined;
   private stopped = false;
   constructor(private readonly store: Store, private readonly accountId: string, private readonly engine: SessionEngine,
@@ -192,7 +194,7 @@ export class RuntimeSession {
   private watching(): boolean { return this.store.config("clipboard_watch") !== "0"; }
   private startIntake(): void {
     if (this.intake || !this.running) return;
-    const stop = new AbortController();
+    const stop = new AbortController(); this.baseline = true;
     const done = pollClipboard(this.clipboard, AbortSignal.any([this.running, stop.signal]), snapshot => this.receiveClipboard(snapshot),
       failed => this.emit({ type: failed ? "clipboard_unavailable" : "clipboard_recovered" }))
       // 监听异常由会话接收，避免未处理拒绝输出底层数据。
@@ -205,12 +207,15 @@ export class RuntimeSession {
     intake.stop.abort(); await intake.done;
   }
   private async receiveClipboard(snapshot: ClipboardSnapshot): Promise<void> {
-    this.report(await this.receiver.receive(snapshot));
+    if (this.baseline) { this.baseline = false; this.receiver.baseline(snapshot); return; }
+    this.report(await this.receiver.receive(snapshot), "clipboard");
     this.wake?.();
   }
-  private report(result: IntakeResult): void {
-    for (const id of result.ids) this.emit({ type: this.store.share(this.accountId, id).cancelled ? "received_cancelled" : "received", id });
-    if (result.issues.length) this.emit({ type: "intake_issues" });
+  // 剪贴板接收的事件带来源，界面据此写明来源并把窗口带到前台（决策 5、6）。
+  private report(result: IntakeResult, source?: "clipboard"): void {
+    const from = source ? { reason: source } : {};
+    for (const id of result.ids) this.emit({ type: this.store.share(this.accountId, id).cancelled ? "received_cancelled" : "received", id, ...from });
+    if (result.issues.length) this.emit({ type: "intake_issues", ...from });
     if (result.failure) { this.engine.blockPersistence(); this.emit({ type: "intake_failed", reason: result.failure }); }
   }
 }

@@ -16,6 +16,7 @@ import { writableDirectory } from "../runtime/session";
 import { LiveController } from "./live";
 import { StartupApp, type StartupDeps } from "./startup";
 import { guardTerminal } from "./terminal";
+import { terminalActivator } from "../platform/window";
 import { t } from "../i18n";
 
 // 全屏界面入口：返回退出码。持有执行锁直到退出；拿不到锁时只显示已有实例的提示，不写任务库。
@@ -61,7 +62,7 @@ export async function runTui(): Promise<number> {
       if (!root) throw new AppError("output_unavailable");
       const { session, drive, tier, manager } = await prepareRuntime(state, account, root, filesystem, () => {});
       const abort = new AbortController();
-      const controller = new LiveController({ store: state, accountId: account, session, quota: () => drive.quota(), tier: () => tier.current,
+      const controller = new LiveController({ store: state, accountId: account, session, quota: () => drive.quota(), tier: () => tier.current, activate: terminalActivator(),
         // 账号页资料：账号名称与邮箱读不到时只显示 ID；授权范围来自会话记录。
         account: async () => {
           await tier.refresh();

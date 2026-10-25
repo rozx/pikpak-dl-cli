@@ -19,6 +19,23 @@ function mount(controller = new FakeController(), size: Size = { columns: 100, r
   return { controller, frame, press };
 }
 
+test("事件区：l 展开显示更多最近事件，再按 l 折叠为 3 条；分隔线提示当前操作", async () => {
+  const controller = new FakeController();
+  const events = Array.from({ length: 20 }, (_, index) => ({ at: Date.parse("2026-10-14T22:00:00") + index * 1000, icon: "●", tone: "text" as const, text: `事件 ${index + 1}` }));
+  controller.update({ events });
+  const { frame, press } = mount(controller, { columns: 100, rows: 30 }); await settle();
+  const shown = () => frame().split("\n").filter(line => /事件 \d+$/.test(line.trim())).map(line => line.trim().split(" ").at(-1));
+  expect(shown()).toEqual(["18", "19", "20"]); expect(frame()).toContain("l 展开日志");
+  await press("l");
+  expect(shown()).toEqual(Array.from({ length: 15 }, (_, index) => String(index + 6))); expect(frame()).toContain("l 收起日志");
+  // 列表仍然可见，按键提示保持在最后一行。
+  expect(frame()).toContain("「某某合集」"); expect(frame().trimEnd().split("\n").at(-1)).toContain("q 退出");
+  await press("l");
+  expect(shown()).toEqual(["18", "19", "20"]);
+  // 确认框打开时不提示，l 也不生效。
+  await press("q"); expect(frame()).not.toContain("展开日志"); await press("l"); expect(shown()).toEqual(["18", "19", "20"]);
+});
+
 test("主面板：标题栏、分组、进度、事件区与按键提示", async () => {
   const { frame } = mount(); await settle();
   const text = frame();
@@ -352,7 +369,7 @@ test("x 释放云端副本：已完成与未完成文件的确认文字、分享
   await press("x");
   expect(controller.previews).toEqual(["f_1"]);
   expect(frame()).toContain("释放云端副本"); expect(frame()).toContain("释放 episode01.mkv 的云端副本（412 MB）？");
-  expect(frame()).toContain("不进回收站"); expect(frame()).toContain("任务记录一并删除"); expect(frame()).not.toContain("重新转存");
+  expect(frame()).toContain("不进回收站"); expect(frame()).toContain("与任务记录"); expect(frame()).not.toContain("重新转存");
   await press("n"); expect(frame()).not.toContain("释放云端副本"); expect(controller.commands).toEqual([]);
   await press("x", "y"); expect(controller.commands.at(-1)).toEqual({ kind: "releaseCopy", id: "f_1" });
 
@@ -385,11 +402,21 @@ test("x 在云盘中已没有副本的已完成任务上只删除记录；已完
   controller.release = { ok: true, copies: 0, bytes: 0n, unfinished: 0, removed: 1 };
   await press("x");
   expect(frame()).toContain("删除任务记录"); expect(frame()).toContain("删除 episode01.mkv 的任务记录？");
-  expect(frame()).toContain("云盘中已没有这些副本，只删除任务记录，本地文件保留。"); expect(frame()).toContain("确认删除");
+  expect(frame()).toContain("云盘中已没有这些副本，只删除任务记录；已下载的文件保留"); expect(frame()).toContain("确认删除");
   await press("y"); expect(controller.commands.at(-1)).toEqual({ kind: "releaseCopy", id: "f_1" });
   controller.release = { ok: true, copies: 2, bytes: 824n * 1048576n, unfinished: 1, removed: 1 };
   await press(keys.up, "x");
-  expect(frame()).toContain("已完成的删除任务记录"); expect(frame()).toContain("继续时从分享重新转存");
+  expect(frame()).toContain("已完成或已取消的删除任务记录"); expect(frame()).toContain("继续时从分享重新转存");
+});
+
+test("x 在没有文件的已取消分享上只删除分享记录", async () => {
+  const controller = new FakeController();
+  controller.update({ shares: [share("s_9", "失效的分享", "cancelled", { cancelled: true, scanStatus: "failed" })], files: { s_9: [] } });
+  const { frame, press } = mount(controller); await settle();
+  controller.release = { ok: true, copies: 0, bytes: 0n, unfinished: 0, removed: 1 };
+  await press("x");
+  expect(frame()).toContain("删除分享「失效的分享」的任务记录？"); expect(frame()).toContain("确认删除");
+  await press("y"); expect(controller.commands.at(-1)).toEqual({ kind: "releaseCopy", id: "s_9" });
 });
 
 test("位置图标在名称前，每行一个：▣ 只在本地、⧉ 两处都有、☁ 只在云端、留空都不在；名称上下对齐；记录删除后行消失，详情页回到主面板", async () => {
@@ -446,10 +473,10 @@ test("X 全部释放：确认框说明只处理已完成的任务；没有可释
   controller.release = { ok: true, copies: 5, bytes: 3n * 1073741824n, unfinished: 0, removed: 5 };
   await press("X");
   expect(controller.previews).toEqual(["*"]);
-  expect(frame()).toContain("释放全部已完成任务的 5 个云端副本（3.0 GB）？"); expect(frame()).toContain("未完成的任务不受影响");
+  expect(frame()).toContain("释放已完成与已取消任务的 5 个云端副本（3.0 GB）？"); expect(frame()).toContain("进行中的任务不受影响");
   await press("y"); expect(controller.commands.at(-1)).toEqual({ kind: "releaseAll" });
   controller.release = { ok: true, copies: 0, bytes: 0n, unfinished: 0, removed: 2 };
-  await press("X"); expect(frame()).toContain("删除全部 2 个已完成任务的记录？"); await press("n");
+  await press("X"); expect(frame()).toContain("删除全部 2 个已完成或已取消任务的记录？"); await press("n");
   controller.release = { ok: false, reason: "copy_absent" };
   await press("X"); expect(frame()).not.toContain("释放云端副本"); expect(controller.notes.at(-1)?.text).toBe("全部释放：没有可释放的云端副本");
   controller.update({ releasing: new Set(["f_1"]) }); await settle();

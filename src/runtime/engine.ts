@@ -19,11 +19,13 @@ import type { AccountTier } from "../pikpak/tier";
 export type RuntimeEvent = { type: string; id?: string; reason?: string; count?: number; bytes?: bigint; size?: bigint };
 export type ActiveTarget = { fileId: string; shareId: string };
 export type EngineOptions = { tier?: Pick<AccountTier, "refresh" | "cap"> };
-// 手动释放的预览：可释放的副本数、合计大小、其中未完成文件的副本数，以及释放后会删除记录的已完成文件数；不能释放时给出原因。
+// 手动释放的预览：可释放的副本数、合计大小、其中未完成文件的副本数，以及释放后会删除的记录数（已完成或已取消的文件，没有文件的已取消分享各算一条）；
+// 不能释放时给出原因。
 export type ReleasePreview = { ok: true; copies: number; bytes: bigint; unfinished: number; removed: number } | { ok: false; reason: string };
 type Delivery = (workspace: FileWorkspace, signal: AbortSignal) => Promise<void>;
 const releaseFailure = (error: unknown): string => error instanceof AppError ? error.code : error instanceof ProviderError && error.status === 429 ? "rate_limited" : "remote_request_failed";
 type PoolEntry = ActiveTarget & { controller: AbortController; done: Promise<void> };
+type ReleaseScope = { targets: ReleaseTarget[]; orphans: string[]; shares: string[]; reason: string | null };
 export class Engine {
   private readonly restore: Restore;
   private readonly space: SpaceManager;
@@ -80,19 +82,20 @@ export class Engine {
     this.cloudQueue = result.then(() => {}, () => {});
     return result;
   }
-  // id 为 null 表示全部释放：只处理已完成任务的副本与记录，未完成的任务不动（避免释放后立即重新转存）。
-  private releaseTargets(id: string | null): { targets: ReleaseTarget[]; orphans: string[]; reason: string | null } {
+  // id 为 null 表示全部释放：只处理已完成或已取消任务的副本与记录，进行中的任务不动（避免释放后立即重新转存）。
+  private releaseTargets(id: string | null): ReleaseScope {
     const found = this.store.releaseTargets(this.drive.accountId, id);
     const free = (fileId: string) => !this.pool.has(fileId) && fileId !== this.stepFile && !this.releasing.has(fileId);
-    const candidates = id === null ? found.targets.filter(target => target.completed) : found.targets;
-    const targets = candidates.filter(target => target.fileIds.every(free)), orphans = found.orphans.filter(free);
+    const candidates = id === null ? found.targets.filter(target => target.finished) : found.targets;
+    const targets = candidates.filter(target => target.fileIds.every(free)), orphans = found.orphans.filter(free), shares = found.shares;
     const busy = candidates.length + found.orphans.length > targets.length + orphans.length;
-    return { targets, orphans, reason: targets.length || orphans.length ? null : busy ? "copy_in_use" : id === null ? "copy_absent" : found.reason ?? "copy_absent" };
+    return { targets, orphans, shares,
+      reason: targets.length || orphans.length || shares.length ? null : busy ? "copy_in_use" : id === null ? "copy_absent" : found.reason ?? "copy_absent" };
   }
-  private preview({ targets, orphans, reason }: { targets: ReleaseTarget[]; orphans: string[]; reason: string | null }): ReleasePreview {
+  private preview({ targets, orphans, shares, reason }: ReleaseScope): ReleasePreview {
     if (reason) return { ok: false, reason };
-    return { ok: true, copies: targets.length, bytes: targets.reduce((sum, target) => sum + target.copy.size, 0n), unfinished: targets.filter(target => !target.completed).length,
-      removed: targets.filter(target => target.completed).reduce((sum, target) => sum + target.fileIds.length, 0) + orphans.length };
+    return { ok: true, copies: targets.length, bytes: targets.reduce((sum, target) => sum + target.copy.size, 0n), unfinished: targets.filter(target => !target.finished).length,
+      removed: targets.filter(target => target.finished).reduce((sum, target) => sum + target.fileIds.length, 0) + orphans.length + shares.length };
   }
   // 手动释放（add-task-controls 决策 4）：只读预览，供界面决定是否打开确认框。
   releasable(id: string | null): ReleasePreview { return this.preview(this.releaseTargets(id)); }
@@ -100,7 +103,7 @@ export class Engine {
   release(id: string | null, signal: AbortSignal): ReleasePreview {
     const found = this.releaseTargets(id), preview = this.preview(found); if (!preview.ok) return preview;
     const { targets, orphans } = found, fileIds = [...targets.flatMap(target => target.fileIds), ...orphans];
-    const shareIds = [...new Set(fileIds.map(fileId => this.store.file(this.drive.accountId, fileId).shareId))];
+    const shareIds = [...new Set([...fileIds.map(fileId => this.store.file(this.drive.accountId, fileId).shareId), ...found.shares])];
     for (const fileId of fileIds) this.releasing.add(fileId);
     const done = this.exclusive(async () => {
       // 整批交给 SpaceManager：并发核对、合并删除请求（add-task-controls 决策 11），结果逐个报告。
@@ -111,11 +114,12 @@ export class Engine {
           if (signal.aborted) return;
           for (const target of targets) this.event({ type: "copy_release_failed", id: target.fileIds[0]!, reason: releaseFailure(error) });
         }
-        for (const target of targets) { const outcome = outcomes.get(target.copy.id); if (outcome) this.reportRelease(target, outcome); }
+        for (const target of targets) { const outcome = outcomes.get(target.copy.id); if (outcome) await this.reportRelease(target, outcome); }
       }
       if (signal.aborted) return;
       for (const fileId of orphans) {
         // 先报告再删除：事件区按 ID 查名称，删除后就查不到了。检查与删除之间没有 await。
+        if (!this.store.forgettable(this.drive.accountId, fileId) || !await this.discardTemporaries([fileId])) continue;
         if (!this.store.forgettable(this.drive.accountId, fileId)) continue;
         this.event({ type: "task_removed", id: fileId }); this.store.forgetFile(this.drive.accountId, fileId);
       }
@@ -127,11 +131,11 @@ export class Engine {
     this.releases.add(done);
     return preview;
   }
-  private reportRelease(target: ReleaseTarget, result: ReleaseOutcome): void {
-    const id = target.fileIds[0]!;
+  private async reportRelease(target: ReleaseTarget, result: ReleaseOutcome): Promise<void> {
+    const id = target.fileIds[0]!, forgettable = () => target.fileIds.every(fileId => this.store.forgettable(this.drive.accountId, fileId));
     if (result.outcome === "released" || result.outcome === "missing") {
-      // 已完成文件的副本释放后删除任务记录（add-task-controls 决策 7）；先报告再删除。
-      const remove = target.completed && target.fileIds.every(fileId => this.store.forgettable(this.drive.accountId, fileId));
+      // 已完成或已取消文件的副本释放后删除任务记录（add-task-controls 决策 7）；已取消文件先删除临时文件。先报告再删除。
+      const remove = target.finished && forgettable() && await this.discardTemporaries(target.fileIds) && forgettable();
       this.event(result.outcome === "released" ? { type: "copy_released", id, bytes: target.copy.size, ...(remove ? { reason: "removed" } : {}) }
         : { type: "copy_missing", id, ...(remove ? { reason: "removed" } : {}) });
       if (remove) for (const fileId of target.fileIds) this.store.forgetFile(this.drive.accountId, fileId);
@@ -140,6 +144,20 @@ export class Engine {
     else if (result.outcome === "denied") this.event({ type: "copy_release_denied", id, reason: result.reason });
     else if (result.outcome === "failed") this.event({ type: "copy_release_failed", id, reason: releaseFailure(result.error) });
     else this.event({ type: "attention", id, reason: "operation_needs_reconciliation" });
+  }
+  // 删除已取消文件的记录前先删除它的未完成临时文件（improve-intake-feedback-and-cleanup 决策 3）；
+  // 失败时报告原因并返回 false，记录保留。已完成文件的临时文件已改名发布，不处理。
+  private async discardTemporaries(fileIds: string[]): Promise<boolean> {
+    const account = this.drive.accountId;
+    for (const fileId of fileIds) {
+      const file = this.store.file(account, fileId);
+      if (file.state === "completed" || !this.store.delivery(account, fileId)) continue;
+      let workspace: FileWorkspace | null = null;
+      try { workspace = await FileWorkspace.open(this.store, account, file.shareId, this.filesystem, false); await workspace.discardTemporary(file); }
+      catch (error) { this.event({ type: "task_remove_failed", id: fileId, reason: error instanceof AppError ? error.code : "target_unavailable" }); return false; }
+      finally { await workspace?.close(); }
+    }
+    return true;
   }
   // 文件记录都已删除的分享随之删除，不再被引用的访问资料一并回收。
   private async forgetShares(shareIds: string[]): Promise<void> {

@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import { systemFiles } from "../src/platform/file-system";
 import { Drive } from "../src/pikpak/drive";
@@ -175,5 +175,84 @@ test.if(nativeFiles)("全部释放：释放全部已完成任务的副本并删�
     expect(f.state.deleteRequests).toEqual([2]); // 合并为一次删除请求
     expect(f.store.shareViews("account")).toEqual([]);
     for (const [index, target] of targets.entries()) expect(await readFile(target)).toEqual(f.sources[index]!.bytes);
+  } finally { await f.close(); }
+});
+
+test.if(nativeFiles)("已取消的任务：全部释放时一并处理，副本删除后删除未完成的临时文件与记录；临时文件身份不符时保留记录", async () => {
+  const f = await engineFixture(localFiles(), 2, [3 * MiB, 3 * MiB]); f.state.limit = 1000n * BigInt(MiB);
+  // 下载只给 1.5 MiB 后挂起，直到被中断，留下未完成的临时文件。
+  const fetch = async (url: string, init: RequestInit) => {
+    const full = await (await f.fetch(url, init)).arrayBuffer();
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new Uint8Array(full.slice(0, 1.5 * MiB)));
+      init.signal?.addEventListener("abort", () => controller.error(Error("aborted")), { once: true });
+    } });
+    return new Response(body, { status: 206, headers: { "content-range": `bytes 0-${3 * MiB - 1}/${3 * MiB}` } });
+  };
+  const { engine, events } = engineFor(f, { fetch });
+  try {
+    const signal = new AbortController().signal;
+    await engine.step(signal); // 扫描
+    const step = new AbortController(), running = engine.step(step.signal);
+    const [first, second] = f.store.fileViews("account", f.share.id);
+    while (f.store.persistedBytes("account", first!.id) < 1.5 * MiB) await Bun.sleep(5);
+    step.abort(); await running;
+    const temp = f.store.delivery("account", first!.id)!.tempPath;
+    expect((await readFile(temp)).byteLength).toBe(1.5 * MiB);
+    // 未取消时全部释放不处理；取消分享后两个文件都按已结束处理（第二个文件没有副本，直接删除记录）。
+    expect(engine.releasable(null)).toEqual({ ok: false, reason: "copy_absent" });
+    f.store.cancel("account", f.share.id);
+    expect(engine.releasable(null)).toEqual({ ok: true, copies: 1, bytes: BigInt(3 * MiB), unfinished: 0, removed: 2 });
+    // 临时文件被换成另一个文件：身份不符，副本照常删除，记录保留。
+    await rm(temp); await writeFile(temp, "other file");
+    engine.release(null, signal); await engine.settleReleases();
+    expect(f.state.deleted).toEqual(["copy-1"]); expect(await readFile(temp, "utf8")).toBe("other file");
+    expect(events.filter(event => event.type === "task_remove_failed")).toEqual([{ type: "task_remove_failed", id: first!.id, reason: "needs_reconciliation" }]);
+    expect(events.filter(event => event.type === "task_removed")).toEqual([{ type: "task_removed", id: second!.id }]);
+    expect(f.store.fileViews("account", f.share.id).map(file => file.id)).toEqual([first!.id]);
+    // 临时文件已不存在时视为已删除：记录与分享随之删除。
+    await rm(temp);
+    expect(engine.releasable(null)).toEqual({ ok: true, copies: 0, bytes: 0n, unfinished: 0, removed: 1 });
+    engine.release(null, signal); await engine.settleReleases();
+    expect(f.store.shareViews("account")).toEqual([]);
+  } finally { await engine.stopActive(); await f.close(); }
+});
+
+test.if(nativeFiles)("已取消的文件：释放副本后删除它的临时文件与记录，事件说明记录已删除", async () => {
+  const f = await engineFixture(localFiles(), 1, [3 * MiB]); f.state.limit = 1000n * BigInt(MiB);
+  const fetch = async (url: string, init: RequestInit) => {
+    const full = await (await f.fetch(url, init)).arrayBuffer();
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new Uint8Array(full.slice(0, 1.5 * MiB)));
+      init.signal?.addEventListener("abort", () => controller.error(Error("aborted")), { once: true });
+    } });
+    return new Response(body, { status: 206, headers: { "content-range": `bytes 0-${3 * MiB - 1}/${3 * MiB}` } });
+  };
+  const { engine, events } = engineFor(f, { fetch });
+  try {
+    await engine.step(new AbortController().signal); // 扫描
+    const step = new AbortController(), running = engine.step(step.signal), file = f.store.files("account")[0]!;
+    while (f.store.persistedBytes("account", file.id) < 1.5 * MiB) await Bun.sleep(5);
+    step.abort(); await running;
+    const temp = f.store.delivery("account", file.id)!.tempPath;
+    f.store.cancel("account", file.id);
+    expect(engine.releasable(file.id)).toEqual({ ok: true, copies: 1, bytes: BigInt(3 * MiB), unfinished: 0, removed: 1 });
+    engine.release(file.id, new AbortController().signal); await engine.settleReleases();
+    expect(events.filter(event => event.type === "copy_released")).toEqual([{ type: "copy_released", id: file.id, bytes: BigInt(3 * MiB), reason: "removed" }]);
+    expect(await Bun.file(temp).exists()).toBe(false);
+    expect(f.store.shareViews("account")).toEqual([]);
+  } finally { await engine.stopActive(); await f.close(); }
+});
+
+test.if(nativeFiles)("没有文件的已取消分享：可以直接删除分享记录并回收访问资料", async () => {
+  const f = await engineFixture(localFiles(), 1);
+  const { engine, events } = engineFor(f);
+  try {
+    const reference = f.store.share("account", f.share.id).secretRef;
+    f.store.cancel("account", f.share.id);
+    expect(engine.releasable(f.share.id)).toEqual({ ok: true, copies: 0, bytes: 0n, unfinished: 0, removed: 1 });
+    engine.release(f.share.id, new AbortController().signal); await engine.settleReleases();
+    expect(events.filter(event => event.type === "share_removed")).toEqual([{ type: "share_removed", id: f.share.id }]);
+    expect(f.store.shareViews("account")).toEqual([]); expect(await f.secrets.get(reference)).toBe(null);
   } finally { await f.close(); }
 });
