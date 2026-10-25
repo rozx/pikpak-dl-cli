@@ -11,10 +11,13 @@ export type Size = { columns: number; rows: number };
 export const MIN_COLUMNS = 60, MIN_ROWS = 15;
 const EVENT_LINES = 3;
 // 标题、横幅、三条分隔线、事件区与按键提示之外的高度留给列表；覆盖层（确认框、粘贴框）占用列表底部。
-// 事件区折叠时最多 3 行，展开时最多半个窗口高（improve-intake-feedback-and-cleanup 决策 7）。
+// 事件区折叠时最多 3 行，展开时最多半个窗口高（improve-intake-feedback-and-cleanup 决策 7），
+// 且不超过覆盖层与至少一行列表之外剩下的高度：展开后再打开确认框或粘贴框，整体仍放得进窗口。
 export function panelLayout(size: Size, snapshot: TuiSnapshot, overlayLines = 0, logExpanded = false): { listHeight: number; eventLines: number } {
-  const eventLines = Math.min(logExpanded ? Math.max(EVENT_LINES, Math.floor(size.rows / 2)) : EVENT_LINES, snapshot.events.length || 1);
-  return { listHeight: Math.max(1, size.rows - 1 - bannerLines(snapshot) - 3 - eventLines - 1 - overlayLines), eventLines };
+  const fixed = 1 + bannerLines(snapshot) + 3 + 1, room = size.rows - fixed - overlayLines - 1;
+  const limit = logExpanded ? Math.max(EVENT_LINES, Math.min(Math.floor(size.rows / 2), room)) : EVENT_LINES;
+  const eventLines = Math.min(limit, snapshot.events.length || 1);
+  return { listHeight: Math.max(1, size.rows - fixed - eventLines - overlayLines), eventLines };
 }
 // 名称之外：缩进与选中标记、状态图标、位置图标、大小与状态合计约 76 列。
 const nameWidthFor = (columns: number) => Math.max(18, Math.min(48, columns - 76));

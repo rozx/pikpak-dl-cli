@@ -36,6 +36,20 @@ test("事件区：l 展开显示更多最近事件，再按 l 折叠为 3 条；
   await press("q"); expect(frame()).not.toContain("展开日志"); await press("l"); expect(shown()).toEqual(["18", "19", "20"]);
 });
 
+test("事件区展开后再打开粘贴框：事件区让出空间，整个界面仍放在窗口内", async () => {
+  const controller = new FakeController();
+  controller.update({ events: Array.from({ length: 20 }, (_, index) => ({ at: Date.parse("2026-10-14T22:00:00") + index * 1000, icon: "●", tone: "text" as const, text: `事件 ${index + 1}` })) });
+  const { frame, press } = mount(controller, { columns: 100, rows: 24 }); await settle();
+  const shown = () => frame().split("\n").filter(line => /事件 \d+$/.test(line.trim())).length;
+  await press("l"); expect(shown()).toBe(12);
+  await press("a");
+  const lines = frame().trimEnd().split("\n");
+  // 标题 1 + 分隔线 3 + 按键提示 1 + 粘贴框 10 + 列表至少 1，事件区只剩 8 行。
+  expect(lines.length).toBeLessThanOrEqual(24); expect(shown()).toBe(8);
+  expect(lines.filter(line => line.includes("╰"))).toHaveLength(1); expect(lines.at(-1)).toContain("Esc");
+  await press(keys.escape); expect(shown()).toBe(12);
+});
+
 test("主面板：标题栏、分组、进度、事件区与按键提示", async () => {
   const { frame } = mount(); await settle();
   const text = frame();
