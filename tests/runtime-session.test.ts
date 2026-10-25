@@ -256,6 +256,23 @@ test("开始监听时剪贴板已有的分享不接收：启动与重新开启�
   } finally { abort.abort(); await running; await f.close(); }
 });
 
+test("正在释放或删除的任务不能重试：文件本身或所在分享中的文件在释放中时拒绝，取消标记保持", async () => {
+  const f = await storeFixture(); const events: RuntimeEvent[] = [];
+  const fake = fakeEngine(async () => { await Bun.sleep(5); return false; }); let releasing: string[] = [f.second.id];
+  const session = new RuntimeSession(f.store, "account", { ...fake.engine, releasingFiles: () => releasing }, f.receiver, fakeClipboard().clipboard);
+  session.subscribe(event => events.push(event));
+  const abort = new AbortController(); const running = session.run(abort.signal);
+  try {
+    f.store.cancel("account", f.share.id);
+    for (const id of [f.second.id, f.share.id]) expect(await session.command({ kind: "retry", id })).toEqual({ ok: false, reason: "task_releasing" });
+    expect(f.store.share("account", f.share.id).cancelled).toBe(true); expect(f.store.file("account", f.second.id).cancelled).toBe(true);
+    expect(events.filter(event => event.type === "command_failed").map(event => event.reason)).toEqual(["task_releasing", "task_releasing"]);
+    // 释放结束后可以重试。
+    releasing = [];
+    expect((await session.command({ kind: "retry", id: f.share.id })).ok).toBe(true); expect(f.store.share("account", f.share.id).cancelled).toBe(false);
+  } finally { abort.abort(); await running; await f.close(); }
+});
+
 test("关闭剪贴板监听后不再读取，重新开启后恢复", async () => {
   const f = await storeFixture(); const clip = fakeClipboard(); const events: RuntimeEvent[] = [];
   f.store.setConfig("clipboard_watch", "0");

@@ -190,6 +190,7 @@ export const zhCN = {
     operation_failed: { reason: "操作失败", advice: "按 r 重试。" },
     copy_absent: { reason: "没有可释放的云端副本", advice: "该任务在云盘中没有本工具保留的副本。" },
     copy_in_use: { reason: "云端副本正在使用", advice: "先按 p 暂停或等它完成，再释放。" },
+    task_releasing: { reason: "任务正在释放或删除", advice: "等释放结束后再操作。" },
     copy_not_owned: { reason: "云端副本不是本工具创建的，不会删除", advice: "如需清理，请在 PikPak 中手动处理。" },
     copy_changed: { reason: "云端副本已被改动，已改为受保护，不会删除", advice: "如需清理，请在 PikPak 中手动处理。" },
     release_denied: { reason: "PikPak 拒绝了删除请求，副本保留", advice: "当前授权可能没有永久删除权限；可在 PikPak 中手动删除。" },

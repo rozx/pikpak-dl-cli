@@ -186,6 +186,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
     operation_failed: { reason: "The operation failed", advice: "Press r to retry." },
     copy_absent: { reason: "There is no cloud copy to release", advice: "This task has no copy kept by this tool in the cloud." },
     copy_in_use: { reason: "The cloud copy is in use", advice: "Press p to pause it or wait for it to finish, then release." },
+    task_releasing: { reason: "The task is being released or deleted", advice: "Wait until releasing finishes, then try again." },
     copy_not_owned: { reason: "The cloud copy was not created by this tool and will not be deleted", advice: "Clean it up in PikPak manually if needed." },
     copy_changed: { reason: "The cloud copy was modified, so it is now protected and will not be deleted", advice: "Clean it up in PikPak manually if needed." },
     release_denied: { reason: "PikPak refused the delete request; the copy is kept", advice: "The authorization may lack permanent delete permission; you can delete it in PikPak manually." },

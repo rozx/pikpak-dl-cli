@@ -188,6 +188,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
     operation_failed: { reason: "操作に失敗しました", advice: "r で再試行してください。" },
     copy_absent: { reason: "解放できるクラウドのコピーがありません", advice: "このタスクには、このツールが保持しているクラウドのコピーがありません。" },
     copy_in_use: { reason: "クラウドのコピーは使用中です", advice: "p で一時停止するか完了を待ってから解放してください。" },
+    task_releasing: { reason: "タスクを解放または削除しています", advice: "解放が終わってから操作してください。" },
     copy_not_owned: { reason: "クラウドのコピーはこのツールが作成したものではないため、削除しません", advice: "必要であれば PikPak で手動で整理してください。" },
     copy_changed: { reason: "クラウドのコピーが変更されたため保護対象に変更し、削除しません", advice: "必要であれば PikPak で手動で整理してください。" },
     release_denied: { reason: "PikPak が削除リクエストを拒否したため、コピーは残っています", advice: "現在の認可には完全削除の権限がない可能性があります。PikPak で手動で削除できます。" },

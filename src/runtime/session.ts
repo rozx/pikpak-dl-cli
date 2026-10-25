@@ -142,7 +142,11 @@ export class RuntimeSession {
     const id = "id" in command ? { id: command.id } : {};
     try {
       let result: CommandResult = { ok: true, ids: [], issues: [] }, count: number | undefined, records: number | undefined;
-      if (command.kind === "retry") this.store.retry(account, command.id);
+      if (command.kind === "retry") {
+        // 正在释放或删除的任务不能重试：后台清理可能已删除已取消文件的临时文件，此时撤销取消会留下记录却丢了断点。
+        if (this.releasingTarget(command.id)) { this.emit({ type: "command_failed", reason: "task_releasing", ...id }); return { ok: false, reason: "task_releasing" }; }
+        this.store.retry(account, command.id);
+      }
       else if (command.kind === "cancel") {
         // 先写取消标记，调度不再选这些文件；再停下下载池中的目标（或该分享的文件），其他在途文件继续。
         this.store.cancel(account, command.id); this.store.recheckCancelledPause(account);
@@ -191,6 +195,12 @@ export class RuntimeSession {
     }
   }
 
+  // 目标文件，或目标分享中的任一文件，正在手动释放或删除。
+  private releasingTarget(id: string): boolean {
+    const releasing = new Set(this.engine.releasingFiles?.() ?? []);
+    if (!releasing.size) return false;
+    return id.startsWith("s_") ? this.store.fileViews(this.accountId, id).some(file => releasing.has(file.id)) : releasing.has(id);
+  }
   private watching(): boolean { return this.store.config("clipboard_watch") !== "0"; }
   private startIntake(): void {
     if (this.intake || !this.running) return;
