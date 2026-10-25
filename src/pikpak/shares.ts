@@ -4,13 +4,16 @@ import type { Scan, Store } from "../state/store";
 import type { PikpakClient } from "./client";
 import { AppError } from "../errors";
 
+// reason 细分 code（fix-share-pass-code-waiting 决策 2）：需要提取码时区分缺码与错码，分享的扫描原因与事件使用它。
 export class ShareScanError extends Error {
-  constructor(readonly code: "access_required" | "share_unavailable" | "invalid_metadata" | "pagination_loop" | "interrupted") {
-    super(code); this.name = "ShareScanError";
+  readonly reason: string;
+  constructor(readonly code: "access_required" | "share_unavailable" | "invalid_metadata" | "pagination_loop" | "interrupted", reason?: "pass_code_missing" | "pass_code_wrong") {
+    super(code); this.name = "ShareScanError"; this.reason = reason ?? code;
   }
 }
 export function requireShareAccess(data: Record<string, unknown>): string {
-  if (data.share_status === "PASS_CODE_EMPTY" || data.share_status === "PASS_CODE_ERROR") throw new ShareScanError("access_required");
+  if (data.share_status === "PASS_CODE_EMPTY") throw new ShareScanError("access_required", "pass_code_missing");
+  if (data.share_status === "PASS_CODE_ERROR") throw new ShareScanError("access_required", "pass_code_wrong");
   if (data.share_status !== "OK") throw new ShareScanError("share_unavailable");
   return typeof data.pass_code_token === "string" ? data.pass_code_token : "";
 }
@@ -71,7 +74,7 @@ export async function scanShare(store: Store, secrets: SecretStore, api: Pick<Pi
   } catch (error) {
     if (signal?.aborted || (error instanceof ShareScanError && error.code === "interrupted")) throw new ShareScanError("interrupted");
     // 认证/网络故障交给调度器分类；保留活动世代，可从未完成目录幂等重扫。
-    if (error instanceof ShareScanError) store.finishScan(scan, false, error.code);
+    if (error instanceof ShareScanError) store.finishScan(scan, false, error.reason);
     else if (error instanceof AppError && error.code === "share_access_required") store.finishScan(scan, false, "access_required");
     throw error;
   } finally {

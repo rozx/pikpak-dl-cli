@@ -14,7 +14,7 @@ import { saveLanguage } from "../i18n/language";
 export type SessionCommand =
   | { kind: "retry"; id: string } | { kind: "cancel"; id: string }
   | { kind: "pauseQueue" } | { kind: "resumeQueue" }
-  | { kind: "submitText"; text: string } | { kind: "setOutputRoot"; path: string }
+  | { kind: "submitText"; text: string } | { kind: "setPassCode"; id: string; passCode: string } | { kind: "setOutputRoot"; path: string }
   | { kind: "setClipboardWatch"; enabled: boolean } | { kind: "setDownloadConnections"; count: number } | { kind: "setActiveFiles"; count: number }
   | { kind: "setLanguage"; language: string }
   | { kind: "pauseTask"; id: string } | { kind: "resumeTask"; id: string } | { kind: "startAll" } | { kind: "releaseCopy"; id: string } | { kind: "releaseAll" };
@@ -169,6 +169,11 @@ export class RuntimeSession {
       else if (command.kind === "setClipboardWatch") {
         this.store.setConfig("clipboard_watch", command.enabled ? "1" : "0");
         if (!command.enabled) await this.stopIntake(); else if (this.running) this.startIntake();
+      } else if (command.kind === "setPassCode") {
+        // 只报告失败；成功由下面的命令事件确认，不再发出“已接收”。提取码不进入事件。
+        const intake = await this.receiver.receivePassCode(command.id, command.passCode);
+        if (intake.failure) { this.report(intake); return { ok: false, reason: intake.failure }; }
+        result = { ok: true, ids: intake.ids, issues: [] };
       } else {
         const intake = await this.receiver.receiveText(command.text);
         this.report(intake);

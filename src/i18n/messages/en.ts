@@ -145,7 +145,9 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
   looks: { releasing: "Releasing", completedMissing: "Completed · local file is gone", cancelled: "Cancelled", paused: "Paused" },
 
   reasons: {
-    access_required: { reason: "The share needs a pass code, or the pass code is wrong", advice: "Copy the complete share text with the link and pass code again, or press a to paste it." },
+    access_required: { reason: "The share needs a pass code, or the pass code is wrong", advice: "Select the share and press Enter to type the pass code, or copy the complete share text with the link and pass code again." },
+    pass_code_missing: { reason: "The share needs a pass code", advice: "Select the share and press Enter to type the pass code, or copy the complete share text with the link and pass code again." },
+    pass_code_wrong: { reason: "Wrong pass code", advice: "Select the share and press Enter to type the correct pass code, or copy the complete share text with the link and pass code again." },
     cloud_space: { reason: "Not enough free cloud space; waiting for space that can be reclaimed", advice: "Wait for cloud copies of completed files to be reclaimed, or free up space in PikPak yourself." },
     waiting_sync: { reason: "The cloud quota does not reflect the space just released yet", advice: "It will be checked again automatically; nothing to do." },
     copy_version_changed: { reason: "The cloud copy was modified and no longer matches the share", advice: "Press r to retry; the file will be saved from the share again." },
@@ -162,6 +164,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
     rate_limited: { reason: "Too many requests; PikPak is rate limiting", advice: "It will retry automatically; nothing to do." },
     remote_copy_missing: { reason: "The cloud copy no longer exists", advice: "Press r to retry; it will be saved again." },
     remote_request_failed: { reason: "A PikPak request failed", advice: "Press r to retry later." },
+    scan_failed: { reason: "Scan failed", advice: "Press r to retry." },
     scan_retry_exhausted: { reason: "Scanning failed several times", advice: "Check your network, then press r to retry." },
     share_unavailable: { reason: "The share has expired or cannot be accessed", advice: "Make sure the share link is still valid." },
     traffic_quota: { reason: "Your PikPak download traffic quota is used up", advice: "It continues automatically once the quota resets." },
@@ -243,6 +246,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
     connections: "Download connections updated; takes effect from the next file",
     activeFiles: "Concurrent files updated; takes effect when a slot frees up",
     language: name => `Interface language switched to ${name}`,
+    passCode: target => `Pass code updated for ${target}; scanning again`,
     failed: reason => `Operation failed: ${reason}`,
   },
 
@@ -262,6 +266,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
     stopping: "Stopping and saving progress… (press Ctrl+C again to quit now)",
     groupShares: count => `${count} share(s)`,
     scanning: "Scanning…",
+    enterPassCode: "press Enter to type the pass code",
     completed: (done, total) => `${done}/${total} done`,
     counts: { downloading: "downloading", transferring: "saving", paused: "paused", queued: "queued", failed: "failed", waiting: "waiting", cancelled: "cancelled", releasing: "releasing", missing: "missing locally" },
     shareCancelled: " · share cancelled",
@@ -270,7 +275,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
   },
 
   keys: {
-    details: "info", retry: "retry", cancel: "cancel",
+    details: "info", passCode: "code", retry: "retry", cancel: "cancel",
     pauseAll: (selectedPaused, anyPaused) => selectedPaused ? "resume/all" : anyPaused ? "pause/run all" : "pause/all", releaseAll: "release/all", folder: "dir",
     paste: "paste", settings: "setup", quit: "quit", confirm: "confirm", back: "back", submit: "submit", releaseCopy: "release cloud copy", openFolder: "open folder",
     save: "save", discard: "discard", select: "select", adjust: "adjust", view: "view", edit: "edit", toggle: "toggle", reauthorize: "authorize again", logout: "sign out", confirmLogout: "sign out",
@@ -304,6 +309,14 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
     releaseUnfinished: "The copies are permanently deleted from PikPak; progress is kept. Resuming saves them from the share again, which fails if the share has expired.",
     releaseMixed: "The copies are permanently deleted from PikPak: completed tasks lose their records, unfinished ones keep progress and are saved from the share again when resumed.",
     openFailed: reason => `Cannot open the folder: ${reason}`,
+  },
+
+  passCode: {
+    title: share => `Pass code for ${share}`,
+    label: "Pass code: ",
+    hint: "The share is scanned again after you submit",
+    invalid: "A pass code is 1 to 32 letters or digits",
+    rejected: reason => `Not saved: ${reason}`,
   },
 
   paste: {

@@ -214,6 +214,19 @@ export function PasteBox({ draft, preview, outputRoot, message, theme, width }: 
   );
 }
 
+// 为选中的分享补填提取码（fix-share-pass-code-waiting 决策 4）：只有一行输入，Enter 提交。
+export const PASS_CODE_LINES = 5;
+export function PassCodeBox({ share, draft, message, theme, width }: { share: string; draft: string; message: string | null; theme: Theme; width: number }) {
+  const text = t().passCode;
+  return (
+    <Box marginLeft={2} borderStyle="round" {...theme.enabled ? { borderColor: "cyan" } : {}} flexDirection="column" paddingX={2} width={Math.min(width, 76)} height={PASS_CODE_LINES}>
+      <Text {...theme.paint("active")} bold wrap="truncate-end">{text.title(share)}</Text>
+      <Text><Text {...theme.paint("muted")}>{text.label}</Text><Text {...theme.paint("strong")}>{draft}</Text><Text {...theme.paint("key")}>▏</Text></Text>
+      <Text {...theme.paint(message ? "warning" : "muted")} wrap="truncate-end">{message ?? text.hint}</Text>
+    </Box>
+  );
+}
+
 export const CONFIRM_LINES = 7;
 export function ConfirmDialog({ heading, title, detail, confirm, theme }: { heading: string; title: string; detail: string; confirm: string; theme: Theme }) {
   return (

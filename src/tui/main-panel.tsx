@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { Theme, Tone } from "./theme";
 import type { TuiSnapshot } from "./controller";
 import { formatBytes, formatDuration, formatSpeed, truncateMiddle } from "./format";
-import { locationMark, shareLocation, type ListRow, type Location, type Row, type ShareCounts } from "./view-model";
+import { explain, locationMark, needsPassCode, shareLocation, shareScanning, type ListRow, type Location, type Row, type ShareCounts } from "./view-model";
 import { Banners, Bar, Header, Keys, Rule, SPINNER, bannerLines, boxHighlight, creditLabel, textHighlight, useSpinner } from "./parts";
 import { t } from "../i18n";
 
@@ -24,11 +24,15 @@ function LocationMark({ location, theme, selected }: { location: Location; theme
 }
 
 // 选中行的全部文字都改用选中调色板，保证在选中背景上可读。
-function CountsText({ counts, theme, scanning, cancelled, paused, selected, frame }: { counts: ShareCounts; theme: Theme; scanning: boolean; cancelled: boolean; paused: boolean; selected: boolean; frame: number | null }) {
+// failure：扫描失败的原因；passCode：可以按 Enter 补填提取码（fix-share-pass-code-waiting 决策 3）。
+function CountsText({ counts, theme, scanning, failure, passCode, cancelled, paused, selected, frame }: { counts: ShareCounts; theme: Theme; scanning: boolean; failure: string | null; passCode: boolean;
+  cancelled: boolean; paused: boolean; selected: boolean; frame: number | null }) {
   const paint = (tone: Tone) => theme.paint(tone, selected);
   const part = (value: number, text: string, tone: Tone) => value > 0 ? <Text {...paint(tone)}> · {value} {text}</Text> : null;
   const text = t().main, label = text.counts;
+  const failed = failure !== null && <Text><Text {...paint("error")}>{counts.total ? " · " : "  "}✗ {failure}</Text>{passCode && <Text {...paint("key")}> · {text.enterPassCode}</Text>}</Text>;
   if (scanning && counts.total === 0) return <Text {...paint("scan")}>  {frame === null ? "" : `${SPINNER[frame]} `}{text.scanning}</Text>;
+  if (failed && counts.total === 0) return failed;
   return (
     <Text>
       <Text {...paint(counts.completed === counts.total && counts.total > 0 ? "done" : "text")}>  {text.completed(counts.completed, counts.total)}</Text>
@@ -37,6 +41,7 @@ function CountsText({ counts, theme, scanning, cancelled, paused, selected, fram
       {part(counts.releasing, label.releasing, "transfer")}{part(counts.missing, label.missing, "warning")}
       {cancelled && <Text {...paint("muted")}>{text.shareCancelled}</Text>}
       {paused && !cancelled && <Text {...paint("warning")}>{text.sharePaused}</Text>}
+      {failed}
     </Text>
   );
 }
@@ -81,7 +86,8 @@ export function RowLine({ row, selected, snapshot, theme, columns, frame = null 
             <Text {...theme.paint("muted", selected)}>{row.expanded ? "  ▼ " : "  ▶ "}</Text>
             <LocationMark location={shareLocation(row.counts)} theme={theme} selected={selected} />
             <Text {...theme.paint("strong", selected)} bold {...textHighlight(theme.selection, selected)}>{t().quote(row.share.title ?? row.share.id)}</Text>
-            <CountsText counts={row.counts} theme={theme} scanning={row.share.scanStatus !== "complete"} cancelled={row.share.cancelled} paused={row.share.paused} selected={selected} frame={frame} />
+            <CountsText counts={row.counts} theme={theme} scanning={shareScanning(row.share)} cancelled={row.share.cancelled} paused={row.share.paused} selected={selected} frame={frame}
+              failure={row.share.scanStatus === "failed" && !row.share.cancelled ? explain(row.share.lastError ?? "scan_failed").reason : null} passCode={needsPassCode(row.share)} />
           </Text>
         </Box>
         <Box flexGrow={1} />
@@ -112,7 +118,7 @@ export function MainPanel({ snapshot, rows, selected, offset, size, theme, overl
   const events = snapshot.events.slice(-eventLines);
   // 暂停、停止中或系统暂停时执行器不在工作，图标保持静止。
   const frame = useSpinner(!snapshot.stopping && !snapshot.userPaused && !snapshot.systemPause
-    && rows.some(row => row.kind === "file" ? !!row.look.active : row.kind === "share" && row.share.scanStatus !== "complete" && row.counts.total === 0));
+    && rows.some(row => row.kind === "file" ? !!row.look.active : row.kind === "share" && shareScanning(row.share) && row.counts.total === 0));
   return (
     <Box flexDirection="column" height={size.rows} paddingX={1}>
       <Header snapshot={snapshot} theme={theme} width={width} />

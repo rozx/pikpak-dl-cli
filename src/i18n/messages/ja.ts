@@ -147,7 +147,9 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
   looks: { releasing: "解放中", completedMissing: "完了 · ローカルファイルがありません", cancelled: "キャンセル済み", paused: "一時停止中" },
 
   reasons: {
-    access_required: { reason: "共有にパスコードが必要か、パスコードが正しくありません", advice: "リンクとパスコードを含む共有テキスト全体をもう一度コピーするか、a で貼り付けてください。" },
+    access_required: { reason: "共有にパスコードが必要か、パスコードが正しくありません", advice: "共有を選んで Enter でパスコードを入力するか、リンクとパスコードを含む共有テキスト全体をもう一度コピーしてください。" },
+    pass_code_missing: { reason: "共有にパスコードが必要です", advice: "共有を選んで Enter でパスコードを入力するか、リンクとパスコードを含む共有テキスト全体をもう一度コピーしてください。" },
+    pass_code_wrong: { reason: "パスコードが正しくありません", advice: "共有を選んで Enter で正しいパスコードを入力するか、リンクとパスコードを含む共有テキスト全体をもう一度コピーしてください。" },
     cloud_space: { reason: "クラウドの空き容量が不足しています。回収できる容量を待っています", advice: "完了したファイルのクラウドのコピーが回収されるのを待つか、PikPak で容量を空けてください。" },
     waiting_sync: { reason: "解放した容量がまだクラウドの容量に反映されていません", advice: "しばらくすると自動で再確認します。操作は不要です。" },
     copy_version_changed: { reason: "クラウドのコピーが変更され、共有のバージョンと一致しません", advice: "r で再試行すると、共有のファイルを保存し直します。" },
@@ -164,6 +166,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
     rate_limited: { reason: "リクエストが多すぎるため、PikPak が一時的に制限しています", advice: "自動で再試行します。操作は不要です。" },
     remote_copy_missing: { reason: "クラウドのコピーがもうありません", advice: "r で再試行すると、保存し直します。" },
     remote_request_failed: { reason: "PikPak へのリクエストに失敗しました", advice: "しばらくしてから r で再試行してください。" },
+    scan_failed: { reason: "スキャンに失敗しました", advice: "r で再試行してください。" },
     scan_retry_exhausted: { reason: "スキャンが何度も失敗しました", advice: "ネットワークを確認してから r で再試行してください。" },
     share_unavailable: { reason: "共有の期限が切れているか、アクセスできません", advice: "共有リンクがまだ有効か確認してください。" },
     traffic_quota: { reason: "PikPak のダウンロード転送量を使い切りました", advice: "転送量が回復すると自動で続行します。" },
@@ -245,6 +248,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
     connections: "ダウンロード接続数を更新しました。次のファイルから適用されます",
     activeFiles: "同時ダウンロード数を更新しました。枠が空き次第適用されます",
     language: name => `表示言語を ${name} に切り替えました`,
+    passCode: target => `${target}のパスコードを更新し、再スキャンします`,
     failed: reason => `操作に失敗しました：${reason}`,
   },
 
@@ -264,6 +268,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
     stopping: "停止して進捗を保存しています…（もう一度 Ctrl+C ですぐに終了）",
     groupShares: count => `共有 ${count} 件`,
     scanning: "スキャン中…",
+    enterPassCode: "Enter でパスコードを入力",
     completed: (done, total) => `${done}/${total} 完了`,
     counts: { downloading: "ダウンロード中", transferring: "保存中", paused: "一時停止", queued: "待機", failed: "失敗", waiting: "待ち", cancelled: "キャンセル済み", releasing: "解放中", missing: "ローカルなし" },
     shareCancelled: " · 共有はキャンセル済み",
@@ -272,7 +277,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
   },
 
   keys: {
-    details: "詳細", retry: "再試行", cancel: "取消",
+    details: "詳細", passCode: "パスコード", retry: "再試行", cancel: "取消",
     pauseAll: (selectedPaused, anyPaused) => selectedPaused ? "再開/全て開始" : anyPaused ? "停止/全て開始" : "停止/全て", releaseAll: "解放/全て", folder: "フォルダ",
     paste: "貼付", settings: "設定", quit: "終了", confirm: "確定", back: "戻る", submit: "送信", releaseCopy: "クラウドのコピーを解放", openFolder: "フォルダを開く",
     save: "保存", discard: "破棄", select: "選択", adjust: "調整", view: "表示", edit: "変更", toggle: "切替", reauthorize: "再認可", logout: "ログアウト", confirmLogout: "ログアウトする",
@@ -306,6 +311,14 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
     releaseUnfinished: "PikPak のコピーを完全に削除し、進捗は残します。再開すると共有から保存し直すため、共有の期限が切れていると完了できません。",
     releaseMixed: "PikPak のコピーを完全に削除します。完了したものはタスク記録を削除し、未完了のものは進捗を残して再開時に共有から保存し直します。",
     openFailed: reason => `フォルダを開けません：${reason}`,
+  },
+
+  passCode: {
+    title: share => `${share}のパスコードを入力`,
+    label: "パスコード：",
+    hint: "送信すると共有を再スキャンします",
+    invalid: "パスコードは 1〜32 文字の英数字です",
+    rejected: reason => `保存できませんでした：${reason}`,
   },
 
   paste: {

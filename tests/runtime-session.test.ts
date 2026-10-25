@@ -172,6 +172,24 @@ test("手动提交与剪贴板同一规则，不与先前输入拼接，也不�
   } finally { abort.abort(); await running; await f.close(); }
 });
 
+test("为选中的分享补填提取码：更新访问资料并重新扫描，事件不含提取码；格式不对时拒绝", async () => {
+  const f = await storeFixture(); const events: RuntimeEvent[] = [];
+  const session = new RuntimeSession(f.store, "account", fakeEngine(async () => { await Bun.sleep(5); return false; }).engine, f.receiver, fakeClipboard().clipboard);
+  session.subscribe(event => events.push(event));
+  try {
+    const before = f.store.share("account", f.share.id);
+    expect(await session.command({ kind: "setPassCode", id: f.share.id, passCode: " ｗ２ｋ９ " })).toEqual({ ok: true, ids: [f.share.id], issues: [] });
+    const after = f.store.share("account", f.share.id);
+    expect(after.requestedRevision).toBe(before.requestedRevision + 1n);
+    expect(after.outputRoot).toBe(before.outputRoot);
+    expect((await loadShareAccess(f.secrets, after.secretRef, "account", "synthetic-remote")).passCode).toBe("w2k9");
+    expect(events).toEqual([{ type: "command", reason: "setPassCode", id: f.share.id }]);
+    expect(JSON.stringify(events)).not.toContain("w2k9");
+    expect(await session.command({ kind: "setPassCode", id: f.share.id, passCode: "多少" })).toEqual({ ok: false, reason: "invalid_input" });
+    expect(f.store.share("account", f.share.id).secretRef).toBe(after.secretRef);
+  } finally { await f.close(); }
+});
+
 test("修改下载目录：新分享与尚未开始的分享改用新目录，已开始的分享保留原目录，不可用目录被拒绝", async () => {
   const f = await storeFixture(); const next = join(f.root, "新目录"); await mkdir(next);
   // f.share 已在本地开始（根目录已打开）；waiting 只接收过、本地还没有任何内容。

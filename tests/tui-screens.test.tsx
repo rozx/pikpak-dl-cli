@@ -7,7 +7,7 @@ import { RowLine, type Size } from "../src/tui/main-panel";
 import { Rule, SPINNER, creditLabel } from "../src/tui/parts";
 import { buildRows } from "../src/tui/view-model";
 import { about } from "../src/about";
-import { FakeController, eventually, keys, mockSnapshot, settle, stripAnsi } from "./fixtures/tui";
+import { FakeController, eventually, keys, mockSnapshot, settle, share, stripAnsi } from "./fixtures/tui";
 
 const mounted: Array<() => void> = [];
 afterEach(() => { for (const unmount of mounted.splice(0)) unmount(); });
@@ -101,6 +101,31 @@ test("折叠与展开分享，Enter 在分享行切换折叠", async () => {
   expect(frame()).toContain("▶ ⧉ 「某某合集」"); expect(frame()).not.toContain("episode02.mkv");
   await press(keys.right); expect(frame()).toContain("episode02.mkv");
   await press(keys.enter); expect(frame()).not.toContain("episode02.mkv");
+});
+
+test("扫描失败的分享显示错误原因而不是扫描中；等待提取码时 Enter 打开输入框并提交", async () => {
+  const snapshot = mockSnapshot();
+  snapshot.shares = [share("s_8", "缺码分享", "partial", { scanStatus: "failed", lastError: "pass_code_wrong" }), share("s_9", "失效分享", "partial", { scanStatus: "failed", lastError: "share_unavailable" })];
+  snapshot.files = {};
+  const { controller, frame, press } = mount(new FakeController(snapshot)); await settle();
+  expect(frame()).toContain("「缺码分享」  ✗ 提取码错误 · 按 Enter 输入提取码");
+  expect(frame()).toContain("「失效分享」  ✗ 分享已失效或无法访问");
+  expect(frame()).not.toContain("扫描中");
+  expect(frame()).toContain("Enter 提取码");
+  // 格式不对时在输入框内说明，不提交；Esc 取消。
+  await press(keys.enter);
+  expect(frame()).toContain("输入「缺码分享」的提取码");
+  await press("ab-1", keys.enter);
+  expect(frame()).toContain("提取码：ab-1"); expect(frame()).toContain("提取码应为 1 到 32 位字母或数字"); expect(controller.commands).toEqual([]);
+  await press(keys.escape); expect(frame()).not.toContain("输入「缺码分享」的提取码");
+  await press(keys.enter, "[200~ a5gq [201~");
+  expect(frame()).toContain("提取码：a5gq");
+  await press(keys.enter);
+  expect(controller.commands).toEqual([{ kind: "setPassCode", id: "s_8", passCode: "a5gq" }]);
+  await eventually(() => expect(frame()).not.toContain("输入「缺码分享」的提取码"));
+  // 其他原因的扫描失败：Enter 仍为展开或折叠，按键提示为详情。
+  await eventually(async () => { await press(keys.down); expect(frame()).toContain("Enter 详情"); });
+  await press(keys.enter); expect(frame()).not.toContain("的提取码");
 });
 
 test("q 与 Ctrl+C 先确认再停止：y 或再按 Ctrl+C 确认，n 与 Esc 返回；停止期间再按 Ctrl+C 立即退出", async () => {
