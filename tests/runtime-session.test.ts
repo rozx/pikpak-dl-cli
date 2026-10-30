@@ -198,11 +198,12 @@ test("取消或暂停正在扫描的分享只停止扫描，不中断执行器�
   try {
     await until(() => log.includes("step-start") && log.includes("scan-1-start"));
     expect((await session.command({ kind: "cancel", id: others[0]!.id })).ok).toBe(true);
-    expect(log.indexOf("scan-1-aborted")).toBeLessThan(log.indexOf("command:cancel"));
+    expect(log).toContain("scan-1-aborted"); expect(log.indexOf("scan-1-aborted")).toBeLessThan(log.indexOf("command:cancel"));
     expect(f.store.share("account", others[0]!.id).cancelled).toBe(true);
     await until(() => log.includes("scan-2-start"), 400);
     expect((await session.command({ kind: "pauseTask", id: others[1]!.id })).ok).toBe(true);
-    expect(log.indexOf("scan-2-aborted")).toBeLessThan(log.indexOf("command:pauseTask"));
+    expect(log).toContain("scan-2-aborted"); expect(log.indexOf("scan-2-aborted")).toBeLessThan(log.indexOf("command:pauseTask"));
+    expect(f.store.shareViews("account").find(view => view.id === others[1]!.id)?.paused).toBe(true);
     expect(log).not.toContain("step-aborted");
     release(); await until(() => log.includes("step-end"));
   } finally { release(); abort.abort(); await running; await f.close(); }
