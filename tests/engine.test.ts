@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { acceptShare } from "../src/auth/share-access";
+import { AppError } from "../src/errors";
 import { systemFiles } from "../src/platform/file-system";
 import { Drive } from "../src/pikpak/drive";
 import { ProviderError } from "../src/pikpak/protocol";
@@ -57,6 +58,32 @@ test.if(nativeFiles)("步骤不扫描；扫描在认证、任务库暂停与限�
     expect(f.state.saves).toBe(1); expect(await engine.scan(signal)).toBe(false);
   } finally { await f.close(); }
 });
+
+test.if(nativeFiles)("扫描引起账号暂停时，串行步骤中的下载也在安全点停止", async () => {
+  const f = await fixture(1, [3 * 1024 * 1024]); f.state.limit = 10n ** 9n; const signal = new AbortController().signal;
+  // 第一份数据之后挂起，直到中断：文件一直停在下载中。
+  const fetch = async (url: string, init: RequestInit) => {
+    const response = await f.fetch(url, init), bytes = new Uint8Array(await response.arrayBuffer());
+    return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(bytes.slice(0, 65536));
+      init.signal?.addEventListener("abort", () => controller.error(Error("aborted")), { once: true });
+    } }), { status: response.status, headers: response.headers });
+  };
+  const engine = new Engine(f.store, f.secrets, new Drive({ request: async (account, path, init = {}, before) => {
+    if (path.includes("share_id=another-share")) throw new AppError("authorization_failed");
+    return f.api.request(account, path, init, before);
+  } }, "account"), localFiles(), () => {}, fetch, async () => {});
+  try {
+    await engine.scan(signal);
+    const file = f.store.files("account")[0]!, running = engine.step(signal);
+    while (f.store.file("account", file.id).state !== "downloading") await Bun.sleep(5);
+    await acceptShare(f.store, f.secrets, { accountId: "account", shareId: "another-share", passCode: "demo", outputRoot: f.root });
+    expect(await engine.scan(signal)).toBe(true);
+    expect(f.store.paused("account")?.reason).toBe("authentication");
+    expect(await running).toBe(false);
+    expect(f.store.file("account", file.id)).toMatchObject({ state: "downloading", lastError: null });
+  } finally { await f.close(); }
+}, 20000);
 
 test.if(nativeFiles)("下载进度事件携带字节与大小，每秒最多 4 次", async () => {
   const f = await fixture(1, [64 * 1024]); const signal = new AbortController().signal; f.state.limit = 10n ** 9n;

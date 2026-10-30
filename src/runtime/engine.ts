@@ -40,6 +40,8 @@ export class Engine {
   private readonly listeners = new Set<(event: RuntimeEvent) => void>();
   // 当前串行步骤正在处理的文件；手动释放不处理它。
   private stepFile: string | null = null;
+  // 当前串行步骤的中断控制器：扫描与步骤并行，扫描引起的账号级暂停也要停下步骤中的转存或下载（scan-shares-on-intake）。
+  private stepHalt: AbortController | null = null;
   // 正在手动释放副本的文件：调度不选它们，释放完成后才能重新转存。
   private readonly releasing = new Set<string>();
   private readonly releases = new Set<Promise<void>>();
@@ -65,7 +67,10 @@ export class Engine {
     // 账号级暂停对所有在途文件都生效：其余文件在安全点停止并保存检查点。
     this.haltPool(fileId);
   }
-  private haltPool(except?: string): void { for (const entry of this.pool.values()) if (entry.fileId !== except) entry.controller.abort(); }
+  private haltPool(except?: string): void {
+    for (const entry of this.pool.values()) if (entry.fileId !== except) entry.controller.abort();
+    if (this.stepFile !== except) this.stepHalt?.abort();
+  }
   // 实际生效的同时下载数：配置值与账号等级上限中的较小值；未提供等级时按未知处理（1）。
   capacity(): number { return Math.min(configuredActiveFiles(this.store), this.options.tier?.cap ?? 1); }
   activeFiles(): ActiveTarget[] { return [...this.pool.values()].map(({ fileId, shareId }) => ({ fileId, shareId })); }
@@ -262,7 +267,8 @@ export class Engine {
     return true;
   }
   async step(signal: AbortSignal): Promise<boolean> {
-    try { return await this.stepOnce(signal); } finally { this.stepFile = null; }
+    const halt = new AbortController(); this.stepHalt = halt;
+    try { return await this.stepOnce(AbortSignal.any([signal, halt.signal])); } finally { this.stepFile = null; this.stepHalt = null; }
   }
   private async stepOnce(signal: AbortSignal): Promise<boolean> {
     const account = this.drive.accountId;
