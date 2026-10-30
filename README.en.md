@@ -108,7 +108,7 @@ Password: demo
 
 Share text copied from any PikPak client works in every language it supports, and common synonyms such as `Pass code` or `Access code` are recognized too; see [Copying share text](docs/en/clipboard.md) for the details. Text that is already on the clipboard when the program starts is not picked up, so copy after the program is running. Linux only counts changed text as a new copy, so copy something else before copying the same text again, or press `a` to paste it. When a share is received from the clipboard, the terminal window comes to the front and the event area says it came from the clipboard. If the pass code is missing or wrong, the share row shows the reason in red; select the share and press Enter to type the pass code and scan again.
 
-The new task appears right away. It is then scanned, saved, downloaded and verified, and the files end up in a folder named after the share title inside your download folder. You can also press `a` to open the paste box, which shows in real time how many shares and pass codes it found:
+The new task appears right away, and its link and pass code are checked and its file list is scanned at once, without waiting for files that are downloading. The files are then saved, downloaded and verified one by one, and end up in a folder named after the share title inside your download folder. You can also press `a` to open the paste box, which shows in real time how many shares and pass codes it found:
 
 <p align="center">
   <img src="docs/images/en/paste.svg" alt="Press a to paste share text; links and pass codes are recognized as you type" width="820">

@@ -8,7 +8,7 @@ import { Drive } from "../src/pikpak/drive";
 import type { PikpakClient } from "../src/pikpak/client";
 import { Engine, type RuntimeEvent } from "../src/runtime/engine";
 import type { LocalFileSystem } from "../src/platform/files";
-import { engineFixture } from "./fixtures/engine";
+import { advance, engineFixture } from "./fixtures/engine";
 
 // 手动释放云端副本（add-task-controls 任务 3.1）：引擎层的调度排除、断点续传与云端操作锁。
 const nativeFiles = ["darwin", "win32", "linux"].includes(process.platform);
@@ -44,7 +44,7 @@ test.if(nativeFiles)("暂停中的文件释放副本后改回就绪、保留断�
   const { engine, events } = engineFor(f, { fetch });
   try {
     const step = new AbortController();
-    await engine.step(step.signal); // 扫描
+    await engine.scan(step.signal); // 扫描
     const file = f.store.files("account")[0]!;
     const running = engine.step(step.signal);
     while (f.store.persistedBytes("account", file.id) < 1.5 * MiB) await Bun.sleep(5);
@@ -85,7 +85,7 @@ test.if(nativeFiles)("下载池中的文件不能释放；已完成文件释放�
   const { engine, events } = engineFor(f, { fetch, cap: 5 });
   try {
     const signal = new AbortController().signal;
-    for (let i = 0; i < 10 && engine.activeFiles().length < 2 && f.state.saves < 2; i++) await engine.step(signal);
+    for (let i = 0; i < 10 && engine.activeFiles().length < 2 && f.state.saves < 2; i++) await advance(engine, signal);
     const [first, second] = f.store.fileViews("account", f.share.id);
     // 第一个文件完成并离开下载池；第二个文件的下载被挂起，留在池中。
     while (f.store.file("account", first!.id).state !== "completed" || engine.activeFiles().length !== 1) await Bun.sleep(5);
@@ -115,7 +115,7 @@ test.if(nativeFiles)("云端操作锁：手动释放进行时，自动回收等�
   const { engine, events } = engineFor(f, { gate });
   try {
     const signal = new AbortController().signal;
-    await engine.step(signal); // 扫描
+    await engine.scan(signal); // 扫描
     const first = f.store.fileViews("account", f.share.id)[0]!;
     while (f.store.file("account", first.id).state !== "completed") await engine.step(signal);
     expect(f.state.usage).toBe(50n);
@@ -125,7 +125,7 @@ test.if(nativeFiles)("云端操作锁：手动释放进行时，自动回收等�
     await Bun.sleep(100);
     expect(f.state.deleted).toEqual([]); expect(f.state.saves).toBe(1);
     open(); await engine.settleReleases(); await stepping;
-    for (let i = 0; i < 5 && f.store.summary("account", f.share.id).status !== "completed"; i++) await engine.step(signal);
+    for (let i = 0; i < 5 && f.store.summary("account", f.share.id).status !== "completed"; i++) await advance(engine, signal);
     // 第一个文件随释放删除了记录，分享里只剩第二个文件。
     expect(f.store.summary("account", f.share.id)).toMatchObject({ status: "completed", total: 1, completed: 1 });
     expect(f.state.deleted).toEqual(["copy-1"]); expect(events.filter(event => event.type === "copy_released")).toHaveLength(1);
@@ -139,7 +139,7 @@ test.if(nativeFiles)("释放后删除记录：已完成文件随副本删除；�
   try {
     const signal = new AbortController().signal;
     // 容量只够一个文件：第二个文件转存前自动回收第一个文件的副本。
-    for (let i = 0; i < 10 && f.store.summary("account", f.share.id).status !== "completed"; i++) await engine.step(signal);
+    for (let i = 0; i < 10 && f.store.summary("account", f.share.id).status !== "completed"; i++) await advance(engine, signal);
     const [first, second] = f.store.fileViews("account", f.share.id);
     expect(f.state.deleted).toEqual(["copy-1"]); expect(first!.copyState).toBe("deleted"); expect(second!.copyState).toBe("retained");
     const reference = f.store.share("account", f.share.id).secretRef;
@@ -166,7 +166,7 @@ test.if(nativeFiles)("全部释放：释放全部已完成任务的副本并删�
   const { engine, events } = engineFor(f);
   try {
     const signal = new AbortController().signal;
-    for (let i = 0; i < 10 && f.store.summary("account", f.share.id).status !== "completed"; i++) await engine.step(signal);
+    for (let i = 0; i < 10 && f.store.summary("account", f.share.id).status !== "completed"; i++) await advance(engine, signal);
     const files = f.store.fileViews("account", f.share.id), targets = files.map(file => f.store.delivery("account", file.id)!.targetPath);
     expect(engine.releasable(null)).toEqual({ ok: true, copies: 2, bytes: 80n, unfinished: 0, removed: 2 });
     expect(engine.release(null, signal)).toMatchObject({ ok: true, copies: 2 });
@@ -193,7 +193,7 @@ function halfFetch(f: Fixture): Fixture["fetch"] {
 }
 // 扫描后让第一个文件下载到 1.5 MiB 再中断，返回分享中的文件。
 async function downloadHalf(engine: Engine, f: Fixture) {
-  await engine.step(new AbortController().signal);
+  await engine.scan(new AbortController().signal);
   const step = new AbortController(), running = engine.step(step.signal), files = f.store.fileViews("account", f.share.id);
   while (f.store.persistedBytes("account", files[0]!.id) < 1.5 * MiB) await Bun.sleep(5);
   step.abort(); await running;

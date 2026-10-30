@@ -29,9 +29,10 @@ function memorySecrets() {
   return { get: async (key: string) => values.get(key) ?? null, set: async (key: string, value: string) => { values.set(key, value); },
     delete: async (key: string) => { values.delete(key); } };
 }
-function fakeEngine(step: (signal: AbortSignal) => Promise<boolean>) {
+// 不提供 scan 时会话不启动扫描循环。
+function fakeEngine(step: (signal: AbortSignal) => Promise<boolean>, scan?: (signal: AbortSignal) => Promise<boolean>) {
   const listeners = new Set<(event: RuntimeEvent) => void>();
-  const engine: SessionEngine = { step, resumeLocalPause: async () => {}, resumeTrafficPause: async () => {}, reconcile: async () => {}, blockPersistence: () => {},
+  const engine: SessionEngine = { step, ...(scan ? { scan } : {}), resumeLocalPause: async () => {}, resumeTrafficPause: async () => {}, reconcile: async () => {}, blockPersistence: () => {},
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   return { engine, emit: (event: RuntimeEvent) => { for (const listener of listeners) listener(event); } };
 }
@@ -127,10 +128,10 @@ test.if(nativeFiles)("取消下载中的文件后断点与云端副本保留，�
   } finally { abort.abort(); await running; await f.close(); }
 }, 40000);
 
-test.if(nativeFiles)("暂停后重建会话仍暂停，继续后恢复调度", async () => {
-  const f = await engineFixture(localFiles(), 1); let requests = 0;
-  const countingEngine = () => new Engine(f.store, f.secrets, new Drive({ request: async (account, path, init = {}, before) => { requests++; return f.api.request(account, path, init, before); } }, "account"),
-    localFiles(), () => {}, async (url, init) => { requests++; return f.fetch(url, init); }, async () => {});
+test.if(nativeFiles)("暂停后重建会话仍暂停：照常扫描但不转存、不下载，继续后恢复调度", async () => {
+  const f = await engineFixture(localFiles(), 1); let downloads = 0;
+  const countingEngine = () => new Engine(f.store, f.secrets, new Drive(f.api, "account"),
+    localFiles(), () => {}, async (url, init) => { downloads++; return f.fetch(url, init); }, async () => {});
   const receiver = () => new IntakeReceiver(f.store, f.secrets, "account", f.root);
   try {
     const first = new RuntimeSession(f.store, "account", fakeEngine(async () => { await Bun.sleep(5); return false; }).engine, receiver(), fakeClipboard().clipboard);
@@ -140,12 +141,71 @@ test.if(nativeFiles)("暂停后重建会话仍暂停，继续后恢复调度", a
     const second = new RuntimeSession(f.store, "account", countingEngine(), receiver(), fakeClipboard().clipboard);
     const stopSecond = new AbortController(); const runningSecond = second.run(stopSecond.signal);
     try {
-      await Bun.sleep(400);
-      expect(requests).toBe(0); expect(f.store.files("account")).toHaveLength(0);
+      // 扫描不受用户暂停影响（scan-shares-on-intake 决策 2）。
+      await until(() => f.store.share("account", f.share.id).scanStatus === "complete");
+      await Bun.sleep(300);
+      expect(f.store.files("account")).toHaveLength(1); expect(f.state.saves).toBe(0); expect(downloads).toBe(0);
       expect((await second.command({ kind: "resumeQueue" })).ok).toBe(true);
-      await until(() => requests > 0);
+      await until(() => f.store.files("account")[0]?.state === "completed");
+      expect(f.state.saves).toBe(1);
     } finally { stopSecond.abort(); await runningSecond; }
   } finally { await f.close(); }
+});
+
+test.if(nativeFiles)("下载进行中接收的分享立即扫描：不等当前文件下载结束，下载不受影响", async () => {
+  const f = await engineFixture(localFiles(), 1, [3 * 1024 * 1024]); f.state.limit = 10n ** 9n;
+  // 第一份数据之后挂起，直到中断：文件一直停在下载中。
+  const fetch = async (url: string, init: RequestInit) => {
+    const response = await f.fetch(url, init), bytes = new Uint8Array(await response.arrayBuffer());
+    return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(bytes.slice(0, 65536));
+      init.signal?.addEventListener("abort", () => controller.error(Error("aborted")), { once: true });
+    } }), { status: response.status, headers: response.headers });
+  };
+  const engine = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), () => {}, fetch, async () => {});
+  const session = new RuntimeSession(f.store, "account", engine, new IntakeReceiver(f.store, f.secrets, "account", f.root), fakeClipboard().clipboard);
+  const abort = new AbortController(); const running = session.run(abort.signal);
+  try {
+    const first = () => f.store.files("account", f.share.id)[0];
+    await until(() => first()?.state === "downloading");
+    const result = await session.command({ kind: "submitText", text: "https://mypikpak.com/s/synthetic-next" });
+    const next = result.ok ? result.ids[0]! : "";
+    await until(() => !!next && f.store.share("account", next).scanStatus === "complete");
+    expect(f.store.files("account", next)).toHaveLength(1);
+    expect(first()!.state).toBe("downloading"); expect(f.state.saves).toBe(1);
+  } finally { abort.abort(); await running; await f.close(); }
+}, 20000);
+
+test("取消或暂停正在扫描的分享只停止扫描，不中断执行器的当前步骤；随后立即扫描下一个分享", async () => {
+  const f = await storeFixture(); const log: string[] = []; let scans = 0; let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const others = [f.store.accept("account", "synthetic-other", f.root, "reference-other"), f.store.accept("account", "synthetic-third", f.root, "reference-third")];
+  const fake = fakeEngine(async signal => {
+    if (log.includes("step-start")) { await Bun.sleep(5); return false; }
+    fake.emit({ type: "downloading", id: f.second.id }); log.push("step-start");
+    await Promise.race([gate, new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }))]);
+    log.push(signal.aborted ? "step-aborted" : "step-end"); return true;
+  }, async signal => {
+    const index = ++scans;
+    if (index > 2) { await Bun.sleep(5); return false; }
+    fake.emit({ type: "scanning", id: others[index - 1]!.id }); log.push(`scan-${index}-start`);
+    await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+    log.push(`scan-${index}-aborted`); return false;
+  });
+  const session = new RuntimeSession(f.store, "account", fake.engine, f.receiver, fakeClipboard().clipboard);
+  session.subscribe(event => { if (event.type === "command") log.push(`command:${event.reason}`); });
+  const abort = new AbortController(); const running = session.run(abort.signal);
+  try {
+    await until(() => log.includes("step-start") && log.includes("scan-1-start"));
+    expect((await session.command({ kind: "cancel", id: others[0]!.id })).ok).toBe(true);
+    expect(log.indexOf("scan-1-aborted")).toBeLessThan(log.indexOf("command:cancel"));
+    expect(f.store.share("account", others[0]!.id).cancelled).toBe(true);
+    await until(() => log.includes("scan-2-start"), 400);
+    expect((await session.command({ kind: "pauseTask", id: others[1]!.id })).ok).toBe(true);
+    expect(log.indexOf("scan-2-aborted")).toBeLessThan(log.indexOf("command:pauseTask"));
+    expect(log).not.toContain("step-aborted");
+    release(); await until(() => log.includes("step-end"));
+  } finally { release(); abort.abort(); await running; await f.close(); }
 });
 
 test("手动提交与剪贴板同一规则，不与先前输入拼接，也不重复接收剪贴板旧内容", async () => {

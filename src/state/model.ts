@@ -5,6 +5,8 @@ export const fileStates = ["discovered", "ready", "saving", "awaiting_remote", "
 export type FileState = typeof fileStates[number];
 export type PauseReason = "authentication" | "permission" | "local_space" | "target_unavailable" | "database" | "traffic_quota";
 export type Pause = { reason: PauseReason; fileId: string | null };
+// 使扫描无法进行的系统暂停（scan-shares-on-intake 决策 2）：请求必然失败或结果无法写入。其余暂停只影响转存与下载。
+export const scanBlockingPauses: readonly PauseReason[] = ["authentication", "permission", "database"];
 export type Counts = { total: number; completed: number; cancelled: number; failed: number; waiting: number; active: number };
 const edges: Record<FileState, readonly FileState[]> = {
   discovered: ["ready", "failed", "needs_attention"],

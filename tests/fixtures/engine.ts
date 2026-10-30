@@ -64,3 +64,8 @@ export async function engineFixture(files: LocalFileSystem, count = 2, sizes?: n
   const engine = new Engine(store, secrets, new Drive(api, "account"), files, () => {}, fetch, async () => {});
   return { root, store, share, state, sources, engine, api, secrets, fetch, close: async () => { store.close(); await rm(root, { recursive: true, force: true }); } };
 }
+
+// 推进引擎一步：有待扫描的分享先扫描，否则推进一个文件。会话中两者由各自的循环执行（scan-shares-on-intake 决策 1）。
+export async function advance(engine: Pick<Engine, "scan" | "step">, signal: AbortSignal): Promise<boolean> {
+  return await engine.scan(signal) || await engine.step(signal);
+}

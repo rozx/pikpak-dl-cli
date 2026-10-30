@@ -10,7 +10,7 @@ import { Engine, type RuntimeEvent } from "../src/runtime/engine";
 import { RuntimeSession } from "../src/runtime/session";
 import { IntakeReceiver } from "../src/intake/receiver";
 import type { Clipboard } from "../src/intake/clipboard";
-import { engineFixture } from "./fixtures/engine";
+import { advance, engineFixture } from "./fixtures/engine";
 import { eventually } from "./fixtures/tui";
 
 const nativeFiles = ["darwin", "win32", "linux"].includes(process.platform);
@@ -45,10 +45,10 @@ function instrument(f: Fixture, options: { delayMs?: number; respond?: (url: str
   engine = new Engine(f.store, f.secrets, new Drive(api, "account"), localFiles(), event => events.push(event), fetch, async () => {}, { tier: paid });
   return { engine, state, events };
 }
-// 反复推进直到没有可做的串行工作、下载池也已清空。
+// 反复推进直到没有可做的扫描与串行工作、下载池也已清空。
 async function drain(engine: Engine, signal = new AbortController().signal) {
   for (let i = 0; i < 400; i++) {
-    if (await engine.step(signal)) continue;
+    if (await advance(engine, signal)) continue;
     if (!engine.activeFiles().length) return;
     await Bun.sleep(20);
   }

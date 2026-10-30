@@ -289,6 +289,22 @@ test("正在执行的文件显示动态图标；暂停或系统暂停时恢复�
   expect(icon()).toBe("↓");
 });
 
+test("队列暂停或下载相关的系统暂停时，扫描中的分享仍显示动态图标；阻止扫描的系统暂停时静止", async () => {
+  const base = mockSnapshot();
+  const controller = new FakeController({ ...base, userPaused: true, shares: [...base.shares, share("s_4", "新分享", "scanning", { scanStatus: "active" })], files: { ...base.files, s_4: [] } });
+  const { frame } = mount(controller); await settle();
+  const icon = () => /(\S) 扫描中/.exec(frame().split("\n").find(line => line.includes("新分享")) ?? "")?.[1];
+  expect(SPINNER).toContain(icon()!);
+  const first = icon(); await Bun.sleep(300);
+  expect(SPINNER).toContain(icon()!); expect(icon()).not.toBe(first);
+  // 文件行仍按队列暂停保持静止。
+  expect(frame().split("\n").find(line => line.includes("episode02.mkv"))).toContain("⏸");
+  controller.update({ userPaused: false, systemPause: { reason: "local_space", fileId: null } }); await settle();
+  expect(SPINNER).toContain(icon()!);
+  controller.update({ systemPause: { reason: "authentication", fileId: null } }); await settle();
+  expect(icon()).toBeUndefined();
+});
+
 test("设置页调整下载连接数：显示当前值，←→ 发出命令，到达 1 或 8 后不再越界", async () => {
   const controller = new FakeController();
   const { frame, press } = mount(controller); await settle();

@@ -5,7 +5,7 @@ import { Engine } from "../src/runtime/engine";
 import type { PikpakClient } from "../src/pikpak/client";
 import { systemFiles } from "../src/platform/file-system";
 import type { LocalFileSystem } from "../src/platform/files";
-import { engineFixture } from "./fixtures/engine";
+import { advance, engineFixture } from "./fixtures/engine";
 
 const nativeFiles = ["darwin", "win32", "linux"].includes(process.platform);
 let files: LocalFileSystem | undefined;
@@ -29,7 +29,7 @@ function interruptingApi(f: Fixture, controller: AbortController, trigger: (path
 }
 async function interruptedRun(f: Fixture, api: Pick<PikpakClient, "request">, controller: AbortController, http = f.fetch) {
   const engine = new Engine(f.store, f.secrets, new Drive(api, "account"), localFiles(), () => {}, http, async () => {});
-  for (let i = 0; i < 20 && !controller.signal.aborted && await engine.step(controller.signal); i++) {}
+  for (let i = 0; i < 20 && !controller.signal.aborted && await advance(engine, controller.signal); i++) {}
   expect(controller.signal.aborted).toBe(true);
 }
 // 中断后以全新执行器恢复：先核对未知操作，再继续调度。
@@ -37,7 +37,7 @@ async function restartedRun(f: Fixture, http = f.fetch) {
   const signal = new AbortController().signal;
   const engine = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), () => {}, http, async () => {});
   await engine.reconcile(signal);
-  for (let i = 0; i < 20 && await engine.step(signal); i++) {}
+  for (let i = 0; i < 20 && await advance(engine, signal); i++) {}
 }
 async function expectDelivered(f: Fixture) {
   for (const file of f.store.files("account")) {
