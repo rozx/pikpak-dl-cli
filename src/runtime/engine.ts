@@ -42,6 +42,8 @@ export class Engine {
   private stepFile: string | null = null;
   // 当前串行步骤的中断控制器：扫描与步骤并行，扫描引起的账号级暂停也要停下步骤中的转存或下载（scan-shares-on-intake）。
   private stepHalt: AbortController | null = null;
+  // 正在进行的扫描的中断控制器：阻止扫描的暂停在安全点停下它，扫描游标保留。
+  private scanHalt: AbortController | null = null;
   // 正在手动释放副本的文件：调度不选它们，释放完成后才能重新转存。
   private readonly releasing = new Set<string>();
   private readonly releases = new Set<Promise<void>>();
@@ -66,6 +68,8 @@ export class Engine {
     this.event({ type: "paused", reason, ...(fileId ? { id: fileId } : {}) });
     // 账号级暂停对所有在途文件都生效：其余文件在安全点停止并保存检查点。
     this.haltPool(fileId);
+    // 扫描只因使它无法进行的暂停而停下；下载相关的暂停不影响扫描。
+    if (scanBlockingPauses.includes(reason)) this.scanHalt?.abort();
   }
   private haltPool(except?: string): void {
     for (const entry of this.pool.values()) if (entry.fileId !== except) entry.controller.abort();
@@ -245,6 +249,10 @@ export class Engine {
   // 扫描一个分享（scan-shares-on-intake 决策 1、2）：由会话的扫描循环调用，与转存、下载分开调度。
   // 扫描只读，不受用户暂停队列与下载相关的系统暂停影响；认证、权限、任务库暂停与账号限流期间不扫描。返回是否扫描了一个分享。
   async scan(signal: AbortSignal): Promise<boolean> {
+    const halt = new AbortController(); this.scanHalt = halt;
+    try { return await this.scanOnce(AbortSignal.any([signal, halt.signal])); } finally { this.scanHalt = null; }
+  }
+  private async scanOnce(signal: AbortSignal): Promise<boolean> {
     const account = this.drive.accountId, pause = this.store.paused(account);
     if (signal.aborted || this.blocked || (pause && scanBlockingPauses.includes(pause.reason)) || this.store.rateLimited(account)) return false;
     const scan = this.store.nextScan(account);

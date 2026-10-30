@@ -10,6 +10,7 @@ import { Drive } from "../src/pikpak/drive";
 import { ProviderError } from "../src/pikpak/protocol";
 import { Engine, type RuntimeEvent } from "../src/runtime/engine";
 import type { LocalFileSystem } from "../src/platform/files";
+import type { PauseReason } from "../src/state/model";
 import { advance, engineFixture } from "./fixtures/engine";
 
 // 本地文件适配层在 macOS 与 Windows 上各有实现；Windows 实现背后是常驻桥接进程，测试结束时关闭。
@@ -84,6 +85,37 @@ test.if(nativeFiles)("扫描引起账号暂停时，串行步骤中的下载也�
     expect(f.store.file("account", file.id)).toMatchObject({ state: "downloading", lastError: null });
   } finally { await f.close(); }
 }, 20000);
+
+test.if(nativeFiles)("阻止扫描的暂停在安全点停下正在进行的扫描，下载相关的暂停不影响扫描", async () => {
+  const f = await fixture(); const signal = new AbortController().signal;
+  // gated 时下一次读取分享清单挂起，直到 open 或请求被中断。
+  let gated = true, waiting = false, details = 0, open: () => void = () => {};
+  const engine = new Engine(f.store, f.secrets, new Drive({ request: async (account, path, init = {}, before) => {
+    if (path.includes("/share/detail")) {
+      details++;
+      if (gated) {
+        gated = false; waiting = true;
+        await new Promise<void>((resolve, reject) => { open = resolve; init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }); })
+          .finally(() => { waiting = false; });
+      }
+    }
+    return f.api.request(account, path, init, before);
+  } }, "account"), localFiles(), () => {}, f.fetch, async () => {});
+  const pause = (reason: PauseReason) => (engine as unknown as { pause(reason: PauseReason): void }).pause(reason);
+  try {
+    let scanning = engine.scan(signal);
+    while (!waiting) await Bun.sleep(5);
+    pause("local_space"); open();
+    expect(await scanning).toBe(true); expect(f.store.share("account", f.share.id).scanStatus).toBe("complete");
+    f.store.resume("account", { authenticated: true, permitted: true, writable: true, hasSpace: true, targetAvailable: true, trafficAvailable: true });
+    f.store.requestRescan("account", f.share.id); gated = true;
+    scanning = engine.scan(signal);
+    while (!waiting) await Bun.sleep(5);
+    const before = details; engine.blockPersistence();
+    expect(await scanning).toBe(false);
+    expect(details).toBe(before); expect(f.store.share("account", f.share.id).scanStatus).toBe("active");
+  } finally { open(); await f.close(); }
+});
 
 test.if(nativeFiles)("下载进度事件携带字节与大小，每秒最多 4 次", async () => {
   const f = await fixture(1, [64 * 1024]); const signal = new AbortController().signal; f.state.limit = 10n ** 9n;
