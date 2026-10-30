@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { acceptShare } from "../src/auth/share-access";
+import { AppError } from "../src/errors";
 import { systemFiles } from "../src/platform/file-system";
 import { Drive } from "../src/pikpak/drive";
 import { ProviderError } from "../src/pikpak/protocol";
 import { Engine, type RuntimeEvent } from "../src/runtime/engine";
 import type { LocalFileSystem } from "../src/platform/files";
-import { engineFixture } from "./fixtures/engine";
+import type { PauseReason } from "../src/state/model";
+import { advance, engineFixture } from "./fixtures/engine";
 
 // 本地文件适配层在 macOS 与 Windows 上各有实现；Windows 实现背后是常驻桥接进程，测试结束时关闭。
 const nativeFiles = ["darwin", "win32", "linux"].includes(process.platform);
@@ -22,31 +24,97 @@ const fixture = (count?: number, sizes?: number[]) => engineFixture(localFiles()
 test.if(nativeFiles)("分享总大小大于容量，逐文件转存、交付、按需回收，保留所有本地成果", async () => {
   const f = await fixture(); const signal = new AbortController().signal;
   try {
-    for (let i = 0; i < 10 && await f.engine.step(signal); i++) {}
+    for (let i = 0; i < 10 && await advance(f.engine, signal); i++) {}
     expect(f.store.summary("account", f.share.id)).toMatchObject({ status: "completed", total: 2, completed: 2 });
     expect(f.state.saves).toBe(2); expect(f.state.deleted).toEqual(["copy-1"]); expect(f.state.usage).toBe(50n);
     for (const file of f.store.files("account")) expect(await readFile(f.store.delivery("account", file.id)!.targetPath)).toEqual(f.sources.find(source => source.id === file.sourceId)!.bytes);
   } finally { await f.close(); }
 });
 
-test.if(nativeFiles)("用户暂停时不扫描、不转存、不下载、不回收；与系统暂停并存时解除其一仍不调度", async () => {
+test.if(nativeFiles)("步骤不扫描；扫描在认证、任务库暂停与限流期间等待，在用户暂停与下载相关的暂停期间照常进行", async () => {
   const f = await fixture(); const signal = new AbortController().signal; let requests = 0;
   const engine = new Engine(f.store, f.secrets, new Drive({ request: async (account, path, init = {}, before) => { requests++; return f.api.request(account, path, init, before); } }, "account"),
     localFiles(), () => {}, async (url, init) => { requests++; return f.fetch(url, init); }, async () => {});
+  const clear = () => f.store.resume("account", { authenticated: true, permitted: true, writable: true, hasSpace: true, targetAvailable: true, trafficAvailable: true });
   try {
-    f.store.setConfig("queue_paused", "1");
+    expect(await engine.step(signal)).toBe(false); expect(requests).toBe(0);
+    for (const reason of ["authentication", "permission", "database"] as const) {
+      f.store.pause("account", reason); expect(await engine.scan(signal)).toBe(false); clear();
+    }
+    f.store.rateLimit("account", 60000); expect(await engine.scan(signal)).toBe(false);
+    expect(requests).toBe(0); expect(f.store.share("account", f.share.id).scanStatus).toBe("pending");
+    f.store.rateLimit("account", 0); f.store.setConfig("queue_paused", "1"); f.store.pause("account", "local_space");
+    expect(await engine.scan(signal)).toBe(true);
+    expect(f.store.share("account", f.share.id).scanStatus).toBe("complete"); expect(f.store.files("account")).toHaveLength(2);
+    const scanned = requests; expect(scanned).toBeGreaterThan(0);
+    expect(await engine.step(signal)).toBe(false); clear();
     expect(await engine.step(signal)).toBe(false);
-    expect(requests).toBe(0); expect(f.store.files("account")).toHaveLength(0); expect(f.store.share("account", f.share.id).scanStatus).toBe("pending");
-    f.store.pause("account", "authentication");
-    f.store.setConfig("queue_paused", "0");
+    f.store.pause("account", "authentication"); f.store.setConfig("queue_paused", "0");
     expect(await engine.step(signal)).toBe(false);
     f.store.setConfig("queue_paused", "1"); f.store.clearAuthenticationPause("account");
     expect(await engine.step(signal)).toBe(false);
-    expect(requests).toBe(0);
+    expect(requests).toBe(scanned); expect(f.state.saves).toBe(0);
     f.store.setConfig("queue_paused", "0");
     expect(await engine.step(signal)).toBe(true);
-    expect(requests).toBeGreaterThan(0);
+    expect(f.state.saves).toBe(1); expect(await engine.scan(signal)).toBe(false);
   } finally { await f.close(); }
+});
+
+test.if(nativeFiles)("扫描引起账号暂停时，串行步骤中的下载也在安全点停止", async () => {
+  const f = await fixture(1, [3 * 1024 * 1024]); f.state.limit = 10n ** 9n; const signal = new AbortController().signal;
+  // 第一份数据之后挂起，直到中断：文件一直停在下载中。
+  const fetch = async (url: string, init: RequestInit) => {
+    const response = await f.fetch(url, init), bytes = new Uint8Array(await response.arrayBuffer());
+    return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(bytes.slice(0, 65536));
+      init.signal?.addEventListener("abort", () => controller.error(Error("aborted")), { once: true });
+    } }), { status: response.status, headers: response.headers });
+  };
+  const engine = new Engine(f.store, f.secrets, new Drive({ request: async (account, path, init = {}, before) => {
+    if (path.includes("share_id=another-share")) throw new AppError("authorization_failed");
+    return f.api.request(account, path, init, before);
+  } }, "account"), localFiles(), () => {}, fetch, async () => {});
+  try {
+    await engine.scan(signal);
+    const file = f.store.files("account")[0]!, running = engine.step(signal);
+    while (f.store.file("account", file.id).state !== "downloading") await Bun.sleep(5);
+    await acceptShare(f.store, f.secrets, { accountId: "account", shareId: "another-share", passCode: "demo", outputRoot: f.root });
+    expect(await engine.scan(signal)).toBe(true);
+    expect(f.store.paused("account")?.reason).toBe("authentication");
+    expect(await running).toBe(false);
+    expect(f.store.file("account", file.id)).toMatchObject({ state: "downloading", lastError: null });
+  } finally { await f.close(); }
+}, 20000);
+
+test.if(nativeFiles)("阻止扫描的暂停在安全点停下正在进行的扫描，下载相关的暂停不影响扫描", async () => {
+  const f = await fixture(); const signal = new AbortController().signal;
+  // gated 时下一次读取分享清单挂起，直到 open 或请求被中断。
+  let gated = true, waiting = false, details = 0, open: () => void = () => {};
+  const engine = new Engine(f.store, f.secrets, new Drive({ request: async (account, path, init = {}, before) => {
+    if (path.includes("/share/detail")) {
+      details++;
+      if (gated) {
+        gated = false; waiting = true;
+        await new Promise<void>((resolve, reject) => { open = resolve; init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }); })
+          .finally(() => { waiting = false; });
+      }
+    }
+    return f.api.request(account, path, init, before);
+  } }, "account"), localFiles(), () => {}, f.fetch, async () => {});
+  const pause = (reason: PauseReason) => (engine as unknown as { pause(reason: PauseReason): void }).pause(reason);
+  try {
+    let scanning = engine.scan(signal);
+    while (!waiting) await Bun.sleep(5);
+    pause("local_space"); open();
+    expect(await scanning).toBe(true); expect(f.store.share("account", f.share.id).scanStatus).toBe("complete");
+    f.store.resume("account", { authenticated: true, permitted: true, writable: true, hasSpace: true, targetAvailable: true, trafficAvailable: true });
+    f.store.requestRescan("account", f.share.id); gated = true;
+    scanning = engine.scan(signal);
+    while (!waiting) await Bun.sleep(5);
+    const before = details; engine.blockPersistence();
+    expect(await scanning).toBe(false);
+    expect(details).toBe(before); expect(f.store.share("account", f.share.id).scanStatus).toBe("active");
+  } finally { open(); await f.close(); }
 });
 
 test.if(nativeFiles)("下载进度事件携带字节与大小，每秒最多 4 次", async () => {
@@ -63,7 +131,7 @@ test.if(nativeFiles)("下载进度事件携带字节与大小，每秒最多 4 �
   };
   const engine = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), event => events.push({ at: Date.now(), event }), slow, async () => {});
   try {
-    for (let i = 0; i < 5 && await engine.step(signal); i++) {}
+    for (let i = 0; i < 5 && await advance(engine, signal); i++) {}
     const file = f.store.files("account")[0]!;
     expect(file.state).toBe("completed");
     const progress = events.filter(item => item.event.type === "progress");
@@ -80,7 +148,7 @@ test.if(nativeFiles)("下载进度事件携带字节与大小，每秒最多 4 �
 test.if(nativeFiles)("保存副本后分享失效，中断重开仍直接从副本完成下载", async () => {
   const f = await fixture(1); const abort = new AbortController();
   try {
-    await f.engine.step(abort.signal);
+    await f.engine.scan(abort.signal);
     const interrupted = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), () => {}, async (url, init) => {
       f.state.expired = true; abort.abort(); return f.fetch(url, init);
     }, async () => {});
@@ -96,7 +164,7 @@ test.if(nativeFiles)("保存副本后分享失效，中断重开仍直接从副�
 test.if(nativeFiles)("没有合法回收候选时等待，文件超过总容量时不删除", async () => {
   const f = await fixture(1); const signal = new AbortController().signal;
   try {
-    f.state.usage = 60n; await f.engine.step(signal); await f.engine.step(signal);
+    f.state.usage = 60n; await f.engine.scan(signal); await f.engine.step(signal);
     expect(f.store.files("account")[0]?.state).toBe("waiting_space"); expect(await f.engine.step(signal)).toBe(false);
     expect(f.state.deleted).toHaveLength(0); expect(f.state.saves).toBe(0);
     const file = f.store.files("account")[0]!; f.store.retry("account", file.id); f.state.limit = 20n;
@@ -109,7 +177,7 @@ test.if(nativeFiles)("大文件等待空间时继续较小文件，不忙循环"
   const f = await fixture(2, [40, 5]); const signal = new AbortController().signal;
   try {
     f.state.usage = 50n;
-    for (let i = 0; i < 10 && await f.engine.step(signal); i++) {}
+    for (let i = 0; i < 10 && await advance(f.engine, signal); i++) {}
     const files = f.store.files("account");
     expect(files.find(file => file.size === 40n)?.state).toBe("waiting_space");
     expect(files.find(file => file.size === 5n)?.state).toBe("completed");
@@ -120,7 +188,7 @@ test.if(nativeFiles)("大文件等待空间时继续较小文件，不忙循环"
 test.if(nativeFiles)("已确认副本丢失时有界重新保存，不需要重新下载有效前缀", async () => {
   const f = await fixture(1); const abort = new AbortController();
   try {
-    await f.engine.step(abort.signal);
+    await f.engine.scan(abort.signal);
     const stopped = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), () => {}, async (url, init) => {
       abort.abort(); return f.fetch(url, init);
     }, async () => {});
@@ -137,7 +205,7 @@ test.if(nativeFiles)("已确认副本丢失时有界重新保存，不需要重�
 test.if(nativeFiles)("本地空间不足和数据库失败暂停执行，不触发云端清理", async () => {
   const f = await fixture(1); const signal = new AbortController().signal;
   try {
-    await f.engine.step(signal);
+    await f.engine.scan(signal);
     const lowSpace: LocalFileSystem = { close: async () => {}, root: async path => {
       const root = await localFiles().root(path);
       return { identity: () => root.identity(), child: (name, create) => root.child(name, create), file: (name, create, readOnly) => root.file(name, create, readOnly),
@@ -151,7 +219,7 @@ test.if(nativeFiles)("本地空间不足和数据库失败暂停执行，不触�
   } finally { await f.close(); }
   const broken = await fixture(1);
   try {
-    await broken.engine.step(signal);
+    await broken.engine.scan(signal);
     broken.store.checkpoint = () => { throw Object.assign(Error("synthetic-write-failure"), { code: "SQLITE_READONLY" }); };
     await broken.engine.step(signal);
     expect(broken.store.paused("account")?.reason).toBe("database");
@@ -162,7 +230,7 @@ test.if(nativeFiles)("本地空间不足和数据库失败暂停执行，不触�
 test.if(nativeFiles)("流量额度只读验证后才恢复，限流遵守等待而不删除", async () => {
   const f = await fixture(1); const signal = new AbortController().signal;
   try {
-    await f.engine.step(signal);
+    await f.engine.scan(signal);
     const quota = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), () => {}, async () => new Response(null, { status: 402 }));
     await quota.step(signal); expect(f.store.paused("account")?.reason).toBe("traffic_quota");
     await quota.resumeTrafficPause(signal); expect(f.store.paused("account")?.reason).toBe("traffic_quota");
@@ -171,7 +239,7 @@ test.if(nativeFiles)("流量额度只读验证后才恢复，限流遵守等待�
   } finally { await f.close(); }
   const limited = await fixture(1);
   try {
-    await limited.engine.step(signal);
+    await limited.engine.scan(signal);
     const rate = new Engine(limited.store, limited.secrets, new Drive(limited.api, "account"), localFiles(), () => {}, async () => new Response(null, { status: 429, headers: { "retry-after": "60" } }));
     await rate.step(signal); expect(limited.store.rateLimited("account")).toBe(true);
     expect(await rate.step(signal)).toBe(false); expect(limited.state.deleted).toHaveLength(0);
@@ -182,7 +250,7 @@ test.if(nativeFiles)("副本缺失但源已更新时不拼接旧版，模糊 404
   for (const mode of ["changed", "ambiguous"] as const) {
     const f = await fixture(1); const abort = new AbortController();
     try {
-      await f.engine.step(abort.signal);
+      await f.engine.scan(abort.signal);
       const interrupted = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), () => {}, async (url, init) => { abort.abort(); return f.fetch(url, init); }, async () => {});
       await interrupted.step(abort.signal);
       const file = f.store.files("account")[0]!;
@@ -211,14 +279,14 @@ test.if(nativeFiles)("部分失败耗尽预算后显式重试，成功版本即�
   }, async () => {});
   try {
     for (let step = 0; step < 12; step++) {
-      await engine.step(signal);
+      await advance(engine, signal);
       const db = new Database(join(f.root, "db.sqlite")); db.exec("UPDATE files SET retry_at=0 WHERE state='retry_wait'"); db.close();
     }
     const files = f.store.files("account"), completed = files.find(file => file.state === "completed")!, failed = files.find(file => file.state === "failed")!;
     expect(failed.retries).toBe(3n); expect(f.store.summary("account", f.share.id).status).toBe("partial");
     await rm(f.store.delivery("account", completed.id)!.targetPath);
     failing = false; f.store.retry("account", f.share.id);
-    for (let step = 0; step < 8 && await engine.step(signal); step++) {}
+    for (let step = 0; step < 8 && await advance(engine, signal); step++) {}
     expect(f.store.summary("account", f.share.id).status).toBe("completed");
     expect(f.state.saves).toBe(2); expect(successfulReads).toBe(1);
   } finally { await f.close(); }
@@ -232,11 +300,11 @@ test.if(nativeFiles)("取消永久不可用目标上的任务后，其他目标�
   } };
   const engine = new Engine(f.store, f.secrets, new Drive(f.api, "account"), filesystem, () => {}, f.fetch, async () => {});
   try {
-    await engine.step(signal); await engine.step(signal);
+    await engine.scan(signal); await engine.step(signal);
     expect(f.store.paused("account")?.reason).toBe("target_unavailable");
     f.store.cancel("account", f.share.id); f.store.recheckCancelledPause("account");
     const next = await acceptShare(f.store, f.secrets, { accountId: "account", shareId: "another-share", passCode: "demo", outputRoot: otherRoot });
-    for (let step = 0; step < 8 && await engine.step(signal); step++) {}
+    for (let step = 0; step < 8 && await advance(engine, signal); step++) {}
     expect(f.store.summary("account", next.share.id).status).toBe("completed");
     expect(f.store.share("account", f.share.id).cancelled).toBe(true); expect(f.state.deleted).toHaveLength(0);
   } finally { await f.close(); await rm(otherRoot, { recursive: true, force: true }); }
@@ -255,7 +323,7 @@ test.if(nativeFiles)("引擎按配置连接数走分段路径，进度单调增�
   };
   const engine = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), event => events.push(event), fetch, async () => {});
   try {
-    for (let i = 0; i < 6 && await engine.step(signal); i++) {}
+    for (let i = 0; i < 6 && await advance(engine, signal); i++) {}
     const file = f.store.files("account")[0]!;
     expect(file.state).toBe("completed"); expect(limitedOnce).toBe(true);
     expect(f.store.delivery("account", file.id)?.ranges?.mode).toBe("parallel");
@@ -270,7 +338,7 @@ test.if(nativeFiles)("引擎按配置连接数走分段路径，进度单调增�
   } finally { await f.close(); }
   const single = await fixture(1, [twoChunks]); single.state.limit = 10n ** 12n; single.store.setConfig("download_connections", "1");
   try {
-    for (let i = 0; i < 6 && await single.engine.step(signal); i++) {}
+    for (let i = 0; i < 6 && await advance(single.engine, signal); i++) {}
     const file = single.store.files("account")[0]!;
     expect(file.state).toBe("completed"); expect(single.store.delivery("account", file.id)?.ranges).toBe(null);
   } finally { await single.close(); }
@@ -280,7 +348,7 @@ test.if(nativeFiles)("分段下载升级上报的限流走账号限流路径，�
   const signal = new AbortController().signal;
   const f = await fixture(1, [twoChunks]); f.state.limit = 10n ** 12n;
   try {
-    await f.engine.step(signal);
+    await f.engine.scan(signal);
     const limited = new Engine(f.store, f.secrets, new Drive(f.api, "account"), localFiles(), () => {},
       async () => new Response(null, { status: 429, headers: { "retry-after": "61" } }), async () => {});
     await limited.step(signal);

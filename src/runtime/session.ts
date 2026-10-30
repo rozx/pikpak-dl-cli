@@ -20,9 +20,12 @@ export type SessionCommand =
   | { kind: "pauseTask"; id: string } | { kind: "resumeTask"; id: string } | { kind: "startAll" } | { kind: "releaseCopy"; id: string } | { kind: "releaseAll" };
 export type CommandResult = { ok: true; ids: string[]; issues: string[] } | { ok: false; reason: string };
 // stopActive / isPooled 对应下载池（add-concurrent-file-downloads）；只有串行执行器的测试替身可以不提供。
+// scan 对应独立的扫描循环（scan-shares-on-intake）；不提供时会话不扫描。
 export type SessionEngine = Pick<Engine, "step" | "resumeLocalPause" | "resumeTrafficPause" | "reconcile" | "blockPersistence" | "subscribe">
-  & Partial<Pick<Engine, "stopActive" | "isPooled" | "releasable" | "release" | "settleReleases" | "releasingFiles">>;
+  & Partial<Pick<Engine, "scan" | "stopActive" | "isPooled" | "releasable" | "release" | "settleReleases" | "releasingFiles">>;
 type Pending = { command: SessionCommand; resolve: (result: CommandResult) => void };
+// 扫描循环当前的扫描：shareId 由 scanning 事件填入。
+type CurrentScan = { shareId: string | null; controller: AbortController; done: Promise<boolean> };
 
 // 与 config --output 相同的目录校验：存在、是目录、可写可进入。
 export async function writableDirectory(path: string): Promise<string> {
@@ -34,21 +37,24 @@ export async function writableDirectory(path: string): Promise<string> {
   } catch { throw new AppError("output_unavailable"); }
 }
 
-// 前台会话：剪贴板接收、执行器循环与界面命令共用一个调度点（add-task-controls 决策 1）。
+// 前台会话：剪贴板接收、执行器循环、扫描循环与界面命令共用一个调度点（add-task-controls 决策 1）。
 // 大多数命令按提交顺序立即执行；只有暂停队列、以及目标正是当前串行步骤所处理项的暂停或取消，
 // 才先中断当前步骤，等它在安全点返回后、开始下一个步骤之前执行。
+// 扫描循环与执行器循环并行（scan-shares-on-intake 决策 1）：分享接收后立即扫描，不等当前文件的转存或下载。
 export class RuntimeSession {
   private readonly listeners = new Set<(event: RuntimeEvent) => void>();
   private readonly pending: Pending[] = [];
   private chain: Promise<unknown> = Promise.resolve();
   private active: { shareId?: string; fileId?: string } = {};
   private stepAbort: AbortController | null = null;
+  private scanning: CurrentScan | null = null;
   private halt: AbortController | null = null;
   private running: AbortSignal | null = null;
   private intake: { stop: AbortController; done: Promise<void> } | null = null;
   // 每次开始监听后的第一份稳定快照只作为基线，不接收（improve-intake-feedback-and-cleanup 决策 4）。
   private baseline = false;
-  private wake: (() => void) | undefined;
+  // 空闲等待中的循环（决策 4）：执行器循环与扫描循环各自注册，wake 一次唤醒全部。
+  private readonly wakers = new Set<() => void>();
   private stopped = false;
   constructor(private readonly store: Store, private readonly accountId: string, private readonly engine: SessionEngine,
     private readonly receiver: IntakeReceiver, private readonly clipboard: Clipboard) {}
@@ -62,14 +68,14 @@ export class RuntimeSession {
   command(command: SessionCommand): Promise<CommandResult> {
     if (this.stopped) return Promise.resolve({ ok: false, reason: "stopped" });
     if (this.interrupts(command)) {
-      return new Promise(resolve => { this.pending.push({ command, resolve }); this.stepAbort?.abort(); this.wake?.(); });
+      return new Promise(resolve => { this.pending.push({ command, resolve }); this.stepAbort?.abort(); this.wake(); });
     }
     const result = this.chain.then(() => this.apply(command));
     this.chain = result.then(() => {}, () => {});
-    void result.then(() => this.wake?.());
+    void result.then(() => this.wake());
     return result;
   }
-  // 需要先停下当前串行步骤的命令；下载池中的目标由 apply 中的 stopActive 停下，不必中断步骤。
+  // 需要先停下当前串行步骤的命令；下载池中的目标由 apply 中的 stopActive 停下，正在扫描的分享由 stopScan 停下，不必中断步骤。
   private interrupts(command: SessionCommand): boolean {
     if (command.kind === "pauseQueue") return true;
     return (command.kind === "cancel" || command.kind === "pauseTask") && (command.id === this.active.fileId || command.id === this.active.shareId);
@@ -81,11 +87,12 @@ export class RuntimeSession {
     // 下载池空出名额时唤醒空闲等待，下一个文件尽快开始。
     // 手动释放结束后，被排除的文件可以重新调度。
     const unsubscribe = this.engine.subscribe(event => {
-      this.track(event); this.emit(event); if (event.type === "released" || event.type === "release_finished") this.wake?.();
+      this.track(event); this.emit(event); if (event.type === "released" || event.type === "release_finished") this.wake();
     });
     const watching = this.watching();
     if (watching) this.startIntake();
     this.emit({ type: "started", ...(watching ? {} : { reason: "clipboard_off" }) });
+    const scanning = this.scanLoop(combined);
     try {
       await this.engine.resumeLocalPause(combined);
       await this.engine.resumeTrafficPause(combined);
@@ -102,7 +109,7 @@ export class RuntimeSession {
       }
     } finally {
       // 中断时下载池中的文件各自在安全点停止并保存检查点。
-      halt.abort(); this.wake?.(); await this.engine.stopActive?.().catch(() => {}); await this.engine.settleReleases?.().catch(() => {});
+      halt.abort(); this.wake(); await this.engine.stopActive?.().catch(() => {}); await scanning; await this.engine.settleReleases?.().catch(() => {});
       await this.stopIntake(); unsubscribe();
       this.stopped = true; this.running = null;
       for (const item of this.pending.splice(0)) item.resolve({ ok: false, reason: "stopped" });
@@ -117,11 +124,30 @@ export class RuntimeSession {
     catch (error) { return { ok: false, reason: error instanceof AppError ? error.code : "operation_failed" }; }
   }
 
+  // 扫描循环：有分享可扫描就继续，没有就空闲等待；扫描被取消或暂停命令中断时立即检查下一个分享。
+  private async scanLoop(signal: AbortSignal): Promise<void> {
+    if (!this.engine.scan) return;
+    while (!signal.aborted) {
+      const controller = new AbortController(), current: CurrentScan = { shareId: null, controller, done: Promise.resolve(false) };
+      this.scanning = current;
+      current.done = this.engine.scan(AbortSignal.any([signal, controller.signal])).catch(() => { this.engine.blockPersistence(); return false; });
+      const progressed = await current.done;
+      this.scanning = null;
+      if (!progressed && !controller.signal.aborted) await this.idle(signal);
+    }
+  }
+  // 取消或暂停正在扫描的分享（决策 5）：标记已经写入，中断扫描并等它在安全点返回。
+  private async stopScan(id: string): Promise<void> {
+    const current = this.scanning;
+    if (current?.shareId !== id) return;
+    current.controller.abort(); await current.done;
+  }
+
   private track(event: RuntimeEvent): void {
+    if (event.type === "scanning") { if (this.scanning && event.id) this.scanning.shareId = event.id; return; }
     // 下载池中文件的事件不代表串行步骤的当前项。
     if (!event.id || this.engine.isPooled?.(event.id)) return;
-    if (event.type === "scanning") this.active = { shareId: event.id };
-    else if (event.type === "saving" || event.type === "downloading") {
+    if (event.type === "saving" || event.type === "downloading") {
       let shareId: string | undefined;
       try { shareId = this.store.file(this.accountId, event.id).shareId; } catch { /* 只读不到时仍按文件匹配。 */ }
       this.active = { fileId: event.id, ...(shareId ? { shareId } : {}) };
@@ -129,11 +155,12 @@ export class RuntimeSession {
   }
   private idle(signal: AbortSignal): Promise<void> {
     return new Promise(resolve => {
-      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); this.wake = undefined; resolve(); };
-      const timer = setTimeout(done, 500); this.wake = done; signal.addEventListener("abort", done, { once: true });
+      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); this.wakers.delete(done); resolve(); };
+      const timer = setTimeout(done, 500); this.wakers.add(done); signal.addEventListener("abort", done, { once: true });
       if (signal.aborted) done();
     });
   }
+  private wake(): void { for (const wake of [...this.wakers]) wake(); }
   private async drain(): Promise<void> {
     while (this.pending.length) { const item = this.pending.shift()!; item.resolve(await this.apply(item.command)); }
   }
@@ -148,14 +175,14 @@ export class RuntimeSession {
         this.store.retry(account, command.id);
       }
       else if (command.kind === "cancel") {
-        // 先写取消标记，调度不再选这些文件；再停下下载池中的目标（或该分享的文件），其他在途文件继续。
+        // 先写取消标记，调度不再选这些文件；再停下下载池中的目标（或该分享的文件）与正在扫描的该分享，其他在途文件继续。
         this.store.cancel(account, command.id); this.store.recheckCancelledPause(account);
-        await this.engine.stopActive?.(target => target.fileId === command.id || target.shareId === command.id);
+        await this.engine.stopActive?.(target => target.fileId === command.id || target.shareId === command.id); await this.stopScan(command.id);
       } else if (command.kind === "pauseQueue") { this.store.setConfig("queue_paused", "1"); await this.engine.stopActive?.(); }
       else if (command.kind === "pauseTask") {
-        // 与取消相同：先写暂停标记，再停下下载池中的目标。
+        // 与取消相同：先写暂停标记，再停下下载池中的目标与正在扫描的分享。
         this.store.pauseTask(account, command.id);
-        await this.engine.stopActive?.(target => target.fileId === command.id || target.shareId === command.id);
+        await this.engine.stopActive?.(target => target.fileId === command.id || target.shareId === command.id); await this.stopScan(command.id);
       } else if (command.kind === "resumeTask") this.store.resumeTask(account, command.id);
       else if (command.kind === "startAll") { this.store.setConfig("queue_paused", "0"); this.store.resumeAllTasks(account); }
       else if (command.kind === "resumeQueue") this.store.setConfig("queue_paused", "0");
@@ -219,7 +246,7 @@ export class RuntimeSession {
   private async receiveClipboard(snapshot: ClipboardSnapshot): Promise<void> {
     if (this.baseline) { this.baseline = false; this.receiver.baseline(snapshot); return; }
     this.report(await this.receiver.receive(snapshot), "clipboard");
-    this.wake?.();
+    this.wake();
   }
   // 剪贴板接收的事件带来源，界面据此写明来源并把窗口带到前台（决策 5、6）。
   private report(result: IntakeResult, source?: "clipboard"): void {

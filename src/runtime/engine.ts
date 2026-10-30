@@ -15,6 +15,7 @@ import { configuredConnections } from "../download/connections";
 import { configuredActiveFiles } from "./active-files";
 import { collectShareAccess } from "../auth/share-access";
 import type { AccountTier } from "../pikpak/tier";
+import { scanBlockingPauses } from "../state/model";
 
 export type RuntimeEvent = { type: string; id?: string; reason?: string; count?: number; bytes?: bigint; size?: bigint };
 export type ActiveTarget = { fileId: string; shareId: string };
@@ -34,12 +35,15 @@ export class Engine {
   private readonly progressAt = new Map<string, number>();
   // 下载池（add-concurrent-file-downloads 决策 2）：已转存、正在下载、校验或发布的文件，每个有自己的中断控制器。
   private readonly pool = new Map<string, PoolEntry>();
-  private preferFile = false;
   // 分段下载因限流降低后的并发，按账号在本次运行内记住，下一个文件从这个值开始（不持久化）。
   private readonly concurrency = new Map<string, number>();
   private readonly listeners = new Set<(event: RuntimeEvent) => void>();
   // 当前串行步骤正在处理的文件；手动释放不处理它。
   private stepFile: string | null = null;
+  // 当前串行步骤的中断控制器：扫描与步骤并行，扫描引起的账号级暂停也要停下步骤中的转存或下载（scan-shares-on-intake）。
+  private stepHalt: AbortController | null = null;
+  // 正在进行的扫描的中断控制器：阻止扫描的暂停在安全点停下它，扫描游标保留。
+  private scanHalt: AbortController | null = null;
   // 正在手动释放副本的文件：调度不选它们，释放完成后才能重新转存。
   private readonly releasing = new Set<string>();
   private readonly releases = new Set<Promise<void>>();
@@ -64,8 +68,13 @@ export class Engine {
     this.event({ type: "paused", reason, ...(fileId ? { id: fileId } : {}) });
     // 账号级暂停对所有在途文件都生效：其余文件在安全点停止并保存检查点。
     this.haltPool(fileId);
+    // 扫描只因使它无法进行的暂停而停下；下载相关的暂停不影响扫描。
+    if (scanBlockingPauses.includes(reason)) this.scanHalt?.abort();
   }
-  private haltPool(except?: string): void { for (const entry of this.pool.values()) if (entry.fileId !== except) entry.controller.abort(); }
+  private haltPool(except?: string): void {
+    for (const entry of this.pool.values()) if (entry.fileId !== except) entry.controller.abort();
+    if (this.stepFile !== except) this.stepHalt?.abort();
+  }
   // 实际生效的同时下载数：配置值与账号等级上限中的较小值；未提供等级时按未知处理（1）。
   capacity(): number { return Math.min(configuredActiveFiles(this.store), this.options.tier?.cap ?? 1); }
   activeFiles(): ActiveTarget[] { return [...this.pool.values()].map(({ fileId, shareId }) => ({ fileId, shareId })); }
@@ -237,41 +246,48 @@ export class Engine {
       } finally { await workspace?.close(); }
     }
   }
+  // 扫描一个分享（scan-shares-on-intake 决策 1、2）：由会话的扫描循环调用，与转存、下载分开调度。
+  // 扫描只读，不受用户暂停队列与下载相关的系统暂停影响；认证、权限、任务库暂停与账号限流期间不扫描。返回是否扫描了一个分享。
+  async scan(signal: AbortSignal): Promise<boolean> {
+    const halt = new AbortController(); this.scanHalt = halt;
+    try { return await this.scanOnce(AbortSignal.any([signal, halt.signal])); } finally { this.scanHalt = null; }
+  }
+  private async scanOnce(signal: AbortSignal): Promise<boolean> {
+    const account = this.drive.accountId, pause = this.store.paused(account);
+    if (signal.aborted || this.blocked || (pause && scanBlockingPauses.includes(pause.reason)) || this.store.rateLimited(account)) return false;
+    const scan = this.store.nextScan(account);
+    if (!scan) return false;
+    this.event({ type: "scanning", id: scan.shareId });
+    try {
+      const result = await scanShare(this.store, this.secrets, this.drive.api, scan, signal);
+      this.event({ type: result.complete ? "scanned" : "scan_incomplete", id: scan.shareId, count: result.files });
+    } catch (error) {
+      if (signal.aborted) return false;
+      if (error instanceof ShareScanError || (error instanceof AppError && error.code === "share_access_required")) {
+        this.event({ type: "scan_waiting", id: scan.shareId, reason: error instanceof ShareScanError ? error.reason : "access_required" });
+      } else if (error instanceof AppError && ["authorization_failed", "login_required", "credentials_unavailable", "account_mismatch"].includes(error.code)) this.pause("authentication");
+      else if (error instanceof ProviderError) {
+        if (error.status === 429) this.store.rateLimit(account, error.retryAfterMs ?? 60000);
+        this.store.scanRetry(scan);
+      }
+      else this.pause("database");
+    }
+    return true;
+  }
   async step(signal: AbortSignal): Promise<boolean> {
-    try { return await this.stepOnce(signal); } finally { this.stepFile = null; }
+    const halt = new AbortController(); this.stepHalt = halt;
+    try { return await this.stepOnce(AbortSignal.any([signal, halt.signal])); } finally { this.stepFile = null; this.stepHalt = null; }
   }
   private async stepOnce(signal: AbortSignal): Promise<boolean> {
     const account = this.drive.accountId;
-    // 用户暂停与系统暂停分开记录，任一存在都不调度新的扫描、转存、下载或回收；对已发出操作的核对不受影响。
+    // 用户暂停与系统暂停分开记录，任一存在都不调度新的转存、下载或回收；对已发出操作的核对不受影响。扫描见 scan。
     if (signal.aborted || this.blocked || this.store.paused(account) || this.store.config("queue_paused") === "1" || this.store.rateLimited(account)) return false;
     await this.options.tier?.refresh(signal);
-    // 没有空余名额时不选新文件，但仍可以扫描。
-    const capacity = this.capacity(), room = this.pool.size < capacity, busy = [...this.pool.keys(), ...this.releasing];
-    const preferred = this.preferFile && room ? this.store.nextFile(account, Date.now(), busy) : null;
-    const scan = preferred ? null : this.store.nextScan(account);
-    if (scan) {
-      this.preferFile = true;
-      this.event({ type: "scanning", id: scan.shareId });
-      try {
-        const result = await scanShare(this.store, this.secrets, this.drive.api, scan, signal);
-        this.event({ type: result.complete ? "scanned" : "scan_incomplete", id: scan.shareId, count: result.files });
-      } catch (error) {
-        if (signal.aborted) return false;
-        if (error instanceof ShareScanError || (error instanceof AppError && error.code === "share_access_required")) {
-          this.event({ type: "scan_waiting", id: scan.shareId, reason: error instanceof ShareScanError ? error.reason : "access_required" });
-        } else if (error instanceof AppError && ["authorization_failed", "login_required", "credentials_unavailable", "account_mismatch"].includes(error.code)) this.pause("authentication");
-        else if (error instanceof ProviderError) {
-          if (error.status === 429) this.store.rateLimit(account, error.retryAfterMs ?? 60000);
-          this.store.scanRetry(scan);
-        }
-        else this.pause("database");
-      }
-      return true;
-    }
-    if (!room) return false;
-    let file = preferred ?? this.store.nextFile(account, Date.now(), busy);
+    const capacity = this.capacity();
+    if (this.pool.size >= capacity) return false;
+    let file = this.store.nextFile(account, Date.now(), [...this.pool.keys(), ...this.releasing]);
     if (!file) return false;
-    this.preferFile = false; this.stepFile = file.id;
+    this.stepFile = file.id;
     const accessReference = this.store.operationFor(account, file.id, "restore")?.secretRef ?? this.store.share(account, file.shareId).secretRef;
     // 串行部分：占用名额、检查已有副本、本地空间预检、空间计划与转存。下载、校验与发布交给 delivery。
     let delivery: Delivery | null = null;

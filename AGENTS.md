@@ -51,7 +51,7 @@ bun run build bun-windows-x64                  # 单文件产物输出到 dist/�
 
 1. `intake/` 解析剪贴板或粘贴的文本，经 `auth/share-access.ts` 把提取码存入系统凭据库，并写入任务库。
 2. `runtime/session.ts` 的 `RuntimeSession` 是唯一的调度点。
-3. `runtime/engine.ts` 的 `Engine.step` 推进任务：`pikpak/` 负责扫描、转存与空间，`download/` 负责工作区、下载、校验与发布。
+3. `runtime/engine.ts` 的 `Engine.scan` 扫描分享，`Engine.step` 推进文件：`pikpak/` 负责扫描、转存与空间，`download/` 负责工作区、下载、校验与发布。
 4. `tui/` 把任务库快照与运行事件呈现给用户。
 
 ### 任务库与外部操作
@@ -75,7 +75,8 @@ bun run build bun-windows-x64                  # 单文件产物输出到 dist/�
 - `RuntimeSession.command` 把命令分为两类：
   - 中断类：暂停队列，以及目标正是当前串行步骤的暂停或取消。它们进入队列，先中断当前步骤再执行。
   - 其余命令：在一条串行 Promise 链上立即执行。
-- `Engine.step` 的串行部分依次做：扫描、选文件、副本检查、空间计划与转存。
+- 扫描由会话中独立的扫描循环调用 `Engine.scan`，与执行器循环并行：分享接收后立即扫描，不等当前文件的转存或下载。扫描只读，用户暂停队列与本地空间、目标不可用、流量这类暂停期间照常进行，认证、权限、任务库暂停（`scanBlockingPauses`）与限流期间等待。取消或暂停正在扫描的分享时只中断扫描。
+- `Engine.step` 只处理文件，串行部分依次做：选文件、副本检查、空间计划与转存。
 - 之后的下载、校验与发布分两种情况：
   - 同时下载数为 1 时，在本步内完成。
   - 否则交给下载池。池的容量 `capacity()` 取配置值与账号等级上限中较小的一个，等级见 `pikpak/tier.ts`。

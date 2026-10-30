@@ -6,6 +6,7 @@ import { formatBytes, formatDuration, formatSpeed, truncateMiddle } from "./form
 import { explain, locationMark, needsPassCode, shareLocation, shareScanning, type ListRow, type Location, type Row, type ShareCounts } from "./view-model";
 import { Banners, Bar, Header, Keys, Rule, SPINNER, bannerLines, boxHighlight, creditLabel, textHighlight, useSpinner } from "./parts";
 import { t } from "../i18n";
+import { scanBlockingPauses } from "../state/model";
 
 export type Size = { columns: number; rows: number };
 export const MIN_COLUMNS = 60, MIN_ROWS = 15;
@@ -121,9 +122,11 @@ export function MainPanel({ snapshot, rows, selected, offset, size, theme, overl
   const { listHeight, eventLines } = panelLayout(size, snapshot, overlayLines, logExpanded);
   const width = size.columns - 2;
   const events = snapshot.events.slice(-eventLines);
-  // 暂停、停止中或系统暂停时执行器不在工作，图标保持静止。
-  const frame = useSpinner(!snapshot.stopping && !snapshot.userPaused && !snapshot.systemPause
-    && rows.some(row => row.kind === "file" ? !!row.look.active : row.kind === "share" && shareScanning(row.share) && row.counts.total === 0));
+  // 暂停、停止中或系统暂停时执行器不在工作，文件图标保持静止；扫描只在停止中或阻止扫描的系统暂停时停下（scan-shares-on-intake 决策 6）。
+  const working = !snapshot.stopping && !snapshot.userPaused && !snapshot.systemPause;
+  const scanning = !snapshot.stopping && !(snapshot.systemPause && scanBlockingPauses.includes(snapshot.systemPause.reason));
+  const moving = (row: ListRow) => row.kind === "file" ? working && !!row.look.active : row.kind === "share" && scanning && shareScanning(row.share) && row.counts.total === 0;
+  const frame = useSpinner(rows.some(moving));
   return (
     <Box flexDirection="column" height={size.rows} paddingX={1}>
       <Header snapshot={snapshot} theme={theme} width={width} />
@@ -133,7 +136,7 @@ export function MainPanel({ snapshot, rows, selected, offset, size, theme, overl
         {rows.length === 0
           ? <Text {...theme.paint("muted")}>{t().main.empty}</Text>
           : rows.slice(offset, offset + listHeight).map((row, index) =>
-            <RowLine key={row.key} row={row} selected={offset + index === selected} snapshot={snapshot} theme={theme} columns={size.columns} frame={frame} />)}
+            <RowLine key={row.key} row={row} selected={offset + index === selected} snapshot={snapshot} theme={theme} columns={size.columns} frame={moving(row) ? frame : null} />)}
       </Box>
       {overlay}
       <Rule width={width} theme={theme} {...logHint && !snapshot.stopping ? { label: [{ text: "l", tone: "key" }, { text: ` ${t().keys.log(logExpanded)}`, tone: "muted" }] } : {}} />
