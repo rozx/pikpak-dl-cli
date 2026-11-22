@@ -113,3 +113,26 @@ test("用户中断时抛出中断原因而不是下载错误", async () => {
   const error = await rejection(receiveRange({ http: server(start => ({ body: slow(start) })).http, lease, chunk, size, file: new MemoryFile(), signal: abort.signal }));
   expect(error.message).toBe("user-stop"); expect(chunk.received).toBe(10n);
 });
+
+// 回归：每次读取若用 Promise.race 与贯穿整个分块的 Promise 竞争，收到的每一段数据都会被它保留，
+// 内存随已下载字节数增长（0.10.2 中下载数 GB 后占用数 GB 内存）。
+test("接收过程中不保留已写入的数据段", async () => {
+  const parts = 128, each = Number(CHUNK_SIZE) / parts;
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({ pull(controller) {
+    if (sent === parts) { controller.close(); return; }
+    sent++; controller.enqueue(new Uint8Array(each));
+  } });
+  const refs: Array<WeakRef<Uint8Array>> = []; let alive = -1;
+  const file = new MemoryFile();
+  file.write = async (_position, bytes) => {
+    refs.push(new WeakRef(bytes));
+    // 收到最后一段时强制回收，统计较早的数据段还有多少仍被引用；最近几段可能还在栈上，不计入。
+    if (refs.length === parts) { Bun.gc(true); alive = refs.slice(0, parts - 16).filter(ref => ref.deref() !== undefined).length; }
+  };
+  const abort = new AbortController();
+  const plan = new ChunkPlan(size, 0n, 2), chunk = plan.claim()!;
+  expect(await receiveRange({ http: server(() => ({ body })).http, lease, chunk, size, file, signal: abort.signal })).toEqual({ kind: "complete" });
+  expect(refs).toHaveLength(parts); expect(chunk.received).toBe(CHUNK_SIZE);
+  expect(alive).toBeGreaterThanOrEqual(0); expect(alive).toBeLessThan(16);
+});

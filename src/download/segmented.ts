@@ -158,9 +158,11 @@ export async function downloadSegmented(options: SegmentedDownload): Promise<{ g
     }
   };
   // 等待以短间隔轮询闸门：冷却与慢启动按注入的时钟计算，不直接按其差值睡眠。
+  // 计时结束时摘掉中断监听器：主循环每 10–100 ms 等待一次，留着不摘会在整个文件的下载期间越积越多。
   const pause = (ms: number) => new Promise<void>(resolve => {
-    const timer = setTimeout(resolve, ms);
-    combined.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+    const done = () => { clearTimeout(timer); combined.removeEventListener("abort", done); resolve(); };
+    const timer = setTimeout(done, ms);
+    combined.addEventListener("abort", done, { once: true });
   });
 
   try {
