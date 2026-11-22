@@ -303,8 +303,8 @@ export class Engine {
     return true;
   }
   // 预先转存一个文件（presave-on-intake 决策 1）：由会话的预先转存循环调用，与扫描、串行步骤和下载池并行。
-  // 按队列顺序把尚无副本的文件转存到云盘，空间不足时先按现有规则回收已交付的副本；仍放不下时停在这个文件，
-  // 不改变它的状态，等有文件交付或副本释放后再试，最长 60 秒。用户暂停队列与任何系统暂停、限流期间不进行。
+  // 按队列顺序把尚无副本的文件转存到云盘，空间不足时先按现有规则回收已交付的副本；仍放不下时停在这个文件、
+  // 记为等待云端空间，等有文件交付或副本释放后再试，最长 60 秒。用户暂停队列与任何系统暂停、限流期间不进行。
   async presave(signal: AbortSignal): Promise<boolean> {
     const halt = new AbortController(); this.presaveHalt = halt;
     const done = this.presaveOnce(AbortSignal.any([signal, halt.signal])); this.presaveDone = done;
@@ -315,23 +315,33 @@ export class Engine {
     if (signal.aborted || this.blocked || this.store.paused(account) || this.store.config("queue_paused") === "1" || this.store.rateLimited(account)) return false;
     if (Date.now() < this.presaveWaitUntil) return false;
     // 选择与登记之间没有 await：串行步骤与手动释放据此避开这个文件。
-    const file = this.store.nextPresave(account, Date.now(), [...this.pool.keys(), ...this.releasing, ...this.stepFile ? [this.stepFile] : []]);
+    const file = this.store.nextPresave(account, Date.now(), [...this.pool.keys(), ...this.releasing]);
     if (!file) return false;
+    // 队列中第一个待转存的文件正由串行步骤处理：由步骤转存它，不越过它转存后面的文件，
+    // 否则后面的文件可能先占用空间、先下载（fix-presave-review-findings 决策 2）。
+    if (file.id === this.stepFile) return false;
     this.presaveTarget = { fileId: file.id, shareId: file.shareId };
     const accessReference = this.store.operationFor(account, file.id, "restore")?.secretRef ?? this.store.share(account, file.shareId).secretRef;
     try {
       return await this.saving(signal, async () => {
         // 等锁期间文件可能已被取消、已有副本或状态已变：不再处理，循环随即选择下一个。
+        const before = this.store.file(account, file.id);
+        if (before.cancelled || this.store.copyForFile(account, file.id) || !["discovered", "ready", "retry_wait", "waiting_space"].includes(before.state)) return true;
+        // 与串行步骤相同，先改为 ready 并清除到期时间：之后的临时失败按同一分类记为稍后重试，转存后可以立即下载。
+        this.store.prepareSave(account, file.id);
         const current = this.store.file(account, file.id);
-        if (current.cancelled || this.store.copyForFile(account, file.id) || !["discovered", "ready", "retry_wait", "waiting_space"].includes(current.state)) return true;
-        // 先核对来源再计划空间：来源已不可用时不为它回收副本。放不下时文件保持原状态，轮到下载时由串行步骤记为等待空间。
+        // 先核对来源再计划空间：来源已不可用时不为它回收副本。
         await this.restore.checkSource(current, signal);
         const space = await this.exclusive(() => this.space.ensure(current.size, signal));
         if (space === "too_large") { this.store.fileError(account, file.id, "file_exceeds_cloud_capacity"); return true; }
-        if (space !== "ready") { this.presaveWaitUntil = Date.now() + 60000; return false; }
-        if (current.state !== "ready") this.store.transition(account, file.id, "ready");
+        if (space !== "ready") {
+          // 仍放不下：与串行步骤相同记为等待云端空间；同一文件再次放不下时不重复写入事件区。
+          this.store.waitForSpace(account, file.id); this.presaveWaitUntil = Date.now() + 60000;
+          if (before.state !== "waiting_space") this.event({ type: "waiting_space", id: file.id, reason: space });
+          return false;
+        }
         this.event({ type: "presaving", id: file.id });
-        await this.restore.ensure(this.store.file(account, file.id), signal);
+        await this.restore.ensure(current, signal);
         // 不写入事件区（转存开始时已有一条），界面据此刷新云盘容量。
         this.event({ type: "presaved", id: file.id });
         return true;
@@ -403,7 +413,11 @@ export class Engine {
             return this.restore.ensure(target, signal);
           });
           if (saved === "too_large") { this.store.fileError(account, file.id, "file_exceeds_cloud_capacity"); return true; }
-          if (typeof saved === "string") { this.store.waitForSpace(account, file.id); this.event({ type: "waiting_space", id: file.id, reason: saved }); return true; }
+          if (typeof saved === "string") {
+            // 空间状态是共享的：预先转存同样暂缓，直到有文件交付、副本释放或 60 秒后。
+            this.store.waitForSpace(account, file.id); this.presaveWaitUntil = Date.now() + 60000;
+            this.event({ type: "waiting_space", id: file.id, reason: saved }); return true;
+          }
           copy = saved;
         }
         file = this.store.file(account, file.id);

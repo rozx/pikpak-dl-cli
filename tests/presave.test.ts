@@ -4,6 +4,7 @@ import type { LocalFileSystem } from "../src/platform/files";
 import type { PikpakClient } from "../src/pikpak/client";
 import { Drive } from "../src/pikpak/drive";
 import { Engine, type RuntimeEvent } from "../src/runtime/engine";
+import { ProviderError } from "../src/pikpak/protocol";
 import { engineFixture } from "./fixtures/engine";
 
 // 预先转存（presave-on-intake）：扫描后按队列顺序把文件转存到云盘，不等轮到下载。
@@ -17,21 +18,25 @@ async function until(condition: () => boolean, timeout = 8000): Promise<void> {
   const deadline = Date.now() + timeout;
   while (!condition()) { if (Date.now() > deadline) throw Error("condition-timeout"); await Bun.sleep(5); }
 }
-// 记录请求路径；转存请求可以挂起，直到放行或被中断（中断时请求未发出）。
-function instrument(f: Fixture, options: { holdRestores?: boolean } = {}) {
+// 记录请求路径与同时进行的转存数。hold 选中的请求挂起，直到放行或被中断（中断时请求未发出）；fail 选中的请求直接失败。
+function instrument(f: Fixture, options: { hold?: (path: string) => boolean; fail?: (path: string) => Error | undefined } = {}) {
   const state = { paths: [] as string[], restores: 0, maxRestores: 0, release: null as (() => void) | null };
   const api: Pick<PikpakClient, "request"> = { request: async (account, path, init = {}, before) => {
     state.paths.push(path.split("?")[0]!);
-    if (options.holdRestores && path.endsWith("/share/restore")) {
-      state.restores++; state.maxRestores = Math.max(state.maxRestores, state.restores);
-      try {
-        await new Promise<void>((resolve, reject) => {
-          state.release = resolve;
-          init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
-        });
-      } finally { state.restores--; state.release = null; }
-    }
-    return f.api.request(account, path, init, before);
+    const failure = options.fail?.(path); if (failure) throw failure;
+    const restore = path.endsWith("/share/restore");
+    if (restore) { state.restores++; state.maxRestores = Math.max(state.maxRestores, state.restores); }
+    try {
+      if (options.hold?.(path)) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            state.release = resolve;
+            init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+          });
+        } finally { state.release = null; }
+      }
+      return await f.api.request(account, path, init, before);
+    } finally { if (restore) state.restores--; }
   } };
   const events: RuntimeEvent[] = [];
   const engine = new Engine(f.store, f.secrets, new Drive(api, "account"), localFiles(), event => events.push(event), f.fetch, async () => {});
@@ -60,7 +65,7 @@ test.if(nativeFiles)("扫描后按队列顺序把文件全部转存到云盘，�
   } finally { await f.close(); }
 }, 30000);
 
-test.if(nativeFiles)("云盘放不下时先回收已交付的副本再转存；仍放不下时停在该文件、状态不变，交付完成前不再尝试", async () => {
+test.if(nativeFiles)("云盘放不下时先回收已交付的副本再转存；仍放不下时停在该文件、记为等待空间，交付完成前不再尝试", async () => {
   // 容量 60、已用 10，每个文件 40：一次只放得下一个副本。
   const f = await engineFixture(localFiles(), 3);
   const { engine, state } = instrument(f);
@@ -70,8 +75,9 @@ test.if(nativeFiles)("云盘放不下时先回收已交付的副本再转存；�
     expect(await engine.presave(signal)).toBe(true);
     expect(await engine.presave(signal)).toBe(false);
     expect(f.state.saves).toBe(1); expect(f.state.deleted).toEqual([]);
-    // 下载中的副本不是回收候选；放不下的文件保持排队，不记为等待空间。
-    expect(f.store.file("account", second!.id).state).toBe("discovered");
+    // 下载中的副本不是回收候选；放不下的文件与串行步骤一样记为等待云端空间，后面的文件不转存。
+    expect(f.store.file("account", second!.id).state).toBe("waiting_space");
+    expect(f.store.file("account", third!.id).state).toBe("discovered");
     const requests = state.paths.length;
     expect(await engine.presave(signal)).toBe(false); expect(state.paths.length).toBe(requests);
     // 第一个文件交付完成后立即重新评估：回收它的副本，转存第二个。
@@ -102,7 +108,7 @@ test.if(nativeFiles)("暂停队列或系统暂停时不预先转存；暂停的�
 
 test.if(nativeFiles)("串行步骤选中正在预先转存的文件时等它结束再下载；转存始终串行", async () => {
   const f = await engineFixture(localFiles(), 2); f.state.limit = 10n ** 9n;
-  const { engine, state } = instrument(f, { holdRestores: true });
+  const { engine, state } = instrument(f, { hold: path => path.endsWith("/share/restore") });
   try {
     while (await engine.scan(signal));
     const [first] = queue(f);
@@ -121,7 +127,7 @@ test.if(nativeFiles)("串行步骤选中正在预先转存的文件时等它结�
 
 test.if(nativeFiles)("取消正在预先转存的文件：转存在发出前中断，文件不记为失败，随后转存下一个", async () => {
   const f = await engineFixture(localFiles(), 2); f.state.limit = 10n ** 9n;
-  const { engine, state } = instrument(f, { holdRestores: true });
+  const { engine, state } = instrument(f, { hold: path => path.endsWith("/share/restore") });
   try {
     while (await engine.scan(signal));
     const [first, second] = queue(f);
@@ -135,5 +141,55 @@ test.if(nativeFiles)("取消正在预先转存的文件：转存在发出前中�
     const next = engine.presave(signal);
     await until(() => state.release !== null); state.release!();
     expect(await next).toBe(true); expect(f.store.copyForFile("account", second!.id)).not.toBeNull();
+  } finally { await f.close(); }
+}, 30000);
+
+// 复审修正（fix-presave-review-findings）。
+test.if(nativeFiles)("刚扫描出的文件在转存前遇到临时错误：记为稍后重试，不阻止引擎，随后转存下一个", async () => {
+  const f = await engineFixture(localFiles(), 2); f.state.limit = 10n ** 9n;
+  let armed = false;
+  const { engine } = instrument(f, { fail: path => armed && path.startsWith("/drive/v1/share?") ? (armed = false, new ProviderError("fake", "provider-error", 503)) : undefined });
+  try {
+    while (await engine.scan(signal));
+    const [first, second] = queue(f);
+    armed = true;
+    expect(await engine.presave(signal)).toBe(true);
+    expect(f.store.file("account", first!.id)).toMatchObject({ state: "retry_wait", lastError: "remote_request_failed" });
+    expect(f.store.paused("account")).toBeNull();
+    expect(await engine.presave(signal)).toBe(true);
+    expect(f.store.copyForFile("account", second!.id)).not.toBeNull(); expect(f.store.copyForFile("account", first!.id)).toBeNull();
+  } finally { await f.close(); }
+}, 30000);
+
+test.if(nativeFiles)("串行步骤已选中但尚未转存的文件：预先转存不越过它转存后面的文件", async () => {
+  // 一次只放得下一个副本：若后面的文件先转存，第一个文件只能等待空间、后下载。
+  const f = await engineFixture(localFiles(), 2);
+  let held = false;
+  const { engine, state } = instrument(f, { hold: path => path.endsWith("/about") && !held && (held = true) });
+  try {
+    while (await engine.scan(signal));
+    const [first, second] = queue(f);
+    const stepping = engine.step(signal);
+    await until(() => state.release !== null);
+    expect(await engine.presave(signal)).toBe(false); expect(f.state.saves).toBe(0);
+    state.release!();
+    expect(await stepping).toBe(true);
+    expect(f.store.file("account", first!.id).state).toBe("completed"); expect(f.store.copyForFile("account", second!.id)).toBeNull();
+    expect(await engine.presave(signal)).toBe(true);
+    expect(f.state.deleted).toEqual(["copy-1"]); expect(f.store.copyForFile("account", second!.id)).not.toBeNull();
+  } finally { await f.close(); }
+}, 30000);
+
+test.if(nativeFiles)("等待空间的文件预先转存后清除到期时间，串行步骤立即下载它", async () => {
+  const f = await engineFixture(localFiles(), 2); f.state.limit = 10n ** 9n;
+  const { engine } = instrument(f);
+  try {
+    while (await engine.scan(signal));
+    const [first, second] = queue(f);
+    f.store.waitForSpace("account", first!.id);
+    expect(await engine.presave(signal)).toBe(true);
+    expect(f.store.file("account", first!.id).state).toBe("awaiting_remote");
+    expect(await engine.step(signal)).toBe(true);
+    expect(f.store.file("account", first!.id).state).toBe("completed"); expect(f.store.file("account", second!.id).state).not.toBe("completed");
   } finally { await f.close(); }
 }, 30000);
