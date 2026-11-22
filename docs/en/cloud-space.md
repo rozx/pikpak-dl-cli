@@ -1,6 +1,6 @@
 # Cloud space and reclaiming
 
-The cloud drive is only a staging area. Permanently deleting completed copies is considered only when the next file does not fit; nothing is cleared early while there is enough cloud space. The program first checks the local target and the remaining download bytes it can verify, then validates the share and the source version, and only then plans cloud capacity.
+The cloud drive is only a staging area. Permanently deleting completed copies is considered only when the next file to save (including files saved ahead right after you copy) does not fit; nothing is cleared early while there is enough cloud space. The program first checks the local target and the remaining download bytes it can verify, then validates the share and the source version, and only then plans cloud capacity.
 
 A candidate must meet all of these: it belongs to the current account; this tool holds clear proof of creating it; the local content is verified and published; every reference to it has been delivered; and its current remote identity, version, name and parent folder still match the record. The proof consists of the separate save task returned for this request, an exact source mapping, the original share and source file IDs, the creation timing and the content fingerprint. A name, time or size alone is never enough to claim ownership.
 
