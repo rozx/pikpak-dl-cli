@@ -19,7 +19,7 @@ test("授权范围：解析空格分隔或数组，JWT 载荷作为后备，未�
   expect(grantedScopes({ accessToken: "opaque-token" })).toBe(null);
   expect(grantedScopes({ accessToken: jwt({ scope: "account" }) })).toEqual(["account"]);
   expect(missingPermissions(null)).toEqual([]);
-  expect(permissionNames(missingPermissions(["account", "cloud_download"]))).toBe("管理文件、分享");
+  expect(permissionNames(missingPermissions(["account", "cloud_download"]))).toBe("管理文件");
   expect(missingPermissions(["account", "files:manage", "share"])).toEqual([]);
 });
 
@@ -27,6 +27,12 @@ test("实测回归：漏勾“管理文件”时服务端返回的范围准确�
   expect(permissionNames(missingPermissions(parseScopes("cloud_download share account")))).toBe("管理文件");
   expect(missingPermissions(parseScopes("files:manage cloud_download share account"))).toEqual([]);
   expect(parseScopes("files:manage,cloud_download, share+account")).toEqual(["files:manage", "cloud_download", "share", "account"]);
+});
+
+test("实测回归（2026-11-21）：授权页不提供分享权限，授权不含 share 时照常登录", () => {
+  const scopes = parseScopes("account files:manage cloud_download");
+  expect(missingPermissions(scopes)).toEqual([]);
+  expect(permissionRows(scopes).find(row => row.scope === "share")).toMatchObject({ state: "missing", required: false });
 });
 
 test("实测回归：服务端只回显登录基础范围时视为未知，不判定缺少权限", () => {

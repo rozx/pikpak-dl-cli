@@ -65,7 +65,7 @@ test("每种语言都能说明全部已知原因，暂停原因、时长与错�
   expect(publicError(new Error("secret-token"))).not.toContain("secret-token");
   setLocale("ja");
   expect(formatDuration(3700)).toBe("1時間01分");
-  expect(permissionNames(PERMISSIONS.filter(permission => permission.required))).toBe("アカウント情報、ファイル管理、共有");
+  expect(permissionNames(PERMISSIONS.filter(permission => permission.required))).toBe("アカウント情報、ファイル管理");
 });
 
 test("本地授权页按当前语言输出，html lang 随之变化", () => {

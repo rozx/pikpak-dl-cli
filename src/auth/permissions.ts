@@ -4,9 +4,11 @@ import { t } from "../i18n";
 export type Permission = { scope: string; label: string; use: string; required: boolean };
 type Known = "account" | "files:manage" | "share" | "cloud_download";
 // 名称与用途按当前语言读取（add-multilingual-ui 决策 5），调用方照常读 label 与 use。
+// 分享不是必需的（fix-pikpak-authorization-page）：2026-11-21 起授权页不向自动注册的应用提供分享权限，
+// 实测不含 share 的授权照样能扫描、转存与下载分享。仍在授权请求中列出，授予时照常记录。
 const known = (scope: Known, required: boolean): Permission => ({ scope, required,
   get label() { return t().permissions[scope].label; }, get use() { return t().permissions[scope].use; } });
-export const PERMISSIONS: readonly Permission[] = [known("account", true), known("files:manage", true), known("share", true), known("cloud_download", false)];
+export const PERMISSIONS: readonly Permission[] = [known("account", true), known("files:manage", true), known("share", false), known("cloud_download", false)];
 // 登录基础范围不单独显示。
 const BASIC = new Set(["openid", "profile", "email", "offline_access"]);
 

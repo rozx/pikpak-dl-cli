@@ -133,7 +133,7 @@ test("启动时已保存的授权缺少必须的权限：提示重新授权，Es
   const { deps, calls } = fakeDeps({ missing: async () => ["管理文件"] });
   const { frame, press } = mount(deps);
   await eventually(() => { expect(frame()).toContain("当前授权缺少必须的权限"); expect(frame()).toContain("✗ 缺少：管理文件"); });
-  expect(frame()).toContain("请全部勾选（必须：账号信息、管理文件、分享）"); expect(frame()).toContain("Esc 返回，继续使用当前授权");
+  expect(frame()).toContain("请全部勾选（必须：账号信息、管理文件）"); expect(frame()).toContain("Esc 返回，继续使用当前授权");
   expect(calls.started).toEqual([]);
   await eventually(async () => { if (!calls.started.length) await press(keys.escape); expect(calls.started).toEqual(["account"]); });
   expect(calls.exits).toEqual([]);
