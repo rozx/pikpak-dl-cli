@@ -63,17 +63,28 @@ test("高频事件合并通知，界面每秒最多重绘 10 次", async () => {
   } finally { await f.close(); }
 });
 
-test("快照按周期重建，云盘容量在下载等事件后与按周期刷新，本地空间按周期刷新", async () => {
-  const f = await fixture({ snapshotMs: 50, quotaMs: 150, localMs: 150, flushMs: 0 });
+// 按事件刷新与按周期刷新分开验证：周期设得很长时，计数只来自事件，不受 CI 计时抖动影响。
+test("快照按周期重建；云盘容量在下载、转存完成等事件后刷新，其他事件不刷新", async () => {
+  const f = await fixture({ snapshotMs: 50, quotaMs: 60_000, localMs: 60_000, flushMs: 0 });
   try {
     f.live.start(); await Bun.sleep(30);
     expect(f.counts.quota).toBe(1); expect(f.counts.local).toBe(1);
-    f.store.cancel("account", f.file.id); await Bun.sleep(80);
+    f.store.cancel("account", f.file.id); await Bun.sleep(150);
     expect(f.live.snapshot().files[f.share.id]![0]!.cancelled).toBe(true);
     f.emit({ type: "downloading", id: f.file.id }); await Bun.sleep(10);
     expect(f.counts.quota).toBe(2);
-    await Bun.sleep(400);
-    expect(f.counts.quota).toBeGreaterThanOrEqual(4); expect(f.counts.local).toBeGreaterThanOrEqual(3);
+    f.emit({ type: "presaved", id: f.file.id }); await Bun.sleep(10);
+    expect(f.counts.quota).toBe(3);
+    f.emit({ type: "scanned", id: f.share.id, count: 1 }); await Bun.sleep(10);
+    expect(f.counts.quota).toBe(3); expect(f.counts.local).toBe(1);
+  } finally { await f.close(); }
+});
+
+test("云盘容量与本地空间按周期刷新", async () => {
+  const f = await fixture({ snapshotMs: 50, quotaMs: 100, localMs: 100, flushMs: 0 });
+  try {
+    f.live.start(); await Bun.sleep(450);
+    expect(f.counts.quota).toBeGreaterThanOrEqual(3); expect(f.counts.local).toBeGreaterThanOrEqual(3);
   } finally { await f.close(); }
 });
 
