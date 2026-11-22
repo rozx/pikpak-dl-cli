@@ -45,18 +45,23 @@ export async function receiveRange(request: RangeRequest): Promise<RangeOutcome>
   request.onAccepted?.();
   const reader = response.body.getReader();
   // 中断或停滞时不依赖响应体随信号报错：每次读取都与中断竞争，用户中断抛出中断原因，停滞视为网络失败。
-  const stopped = new Promise<never>((_, reject) => {
-    const fail = () => reject(signal.aborted ? signal.reason ?? Error("interrupted") : new DownloadError("network_failure"));
-    if (combined.aborted) fail(); else combined.addEventListener("abort", fail, { once: true });
-  });
-  stopped.catch(() => {});
+  // 不能用 Promise.race 与一个贯穿整个分块的 Promise 竞争：每次竞争的结果（连同收到的数据）都会挂在那个 Promise 上，
+  // 直到它落定才能回收，内存随已下载字节数增长。这里只保留一个监听器，中断时拒绝当前这一次读取。
+  let interrupt: ((error: unknown) => void) | null = null;
+  const stopReason = () => signal.aborted ? signal.reason ?? Error("interrupted") : new DownloadError("network_failure");
+  const onAbort = () => interrupt?.(stopReason());
+  combined.addEventListener("abort", onAbort, { once: true });
   try {
     while (true) {
       timer = setTimeout(() => stalled.abort(), request.stallTimeoutMs ?? 60_000);
-      const part = await Promise.race([reader.read(), stopped]).catch((error: unknown) => {
+      const part = await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
+        if (combined.aborted) { reject(stopReason()); return; }
+        interrupt = reject;
+        reader.read().then(resolve, reject);
+      }).catch((error: unknown) => {
         if (signal.aborted) throw signal.reason ?? Error("interrupted");
         throw error instanceof DownloadError ? error : new DownloadError("network_failure");
-      }).finally(() => { clearTimeout(timer); timer = undefined; });
+      }).finally(() => { interrupt = null; clearTimeout(timer); timer = undefined; });
       if (part.done) break;
       if (signal.aborted) throw signal.reason ?? Error("interrupted");
       const position = chunk.start + chunk.received;
@@ -66,7 +71,7 @@ export async function receiveRange(request: RangeRequest): Promise<RangeOutcome>
       request.onBytes?.(part.value.byteLength);
     }
   // 不等待取消完成：响应体的取消可能要等一次挂起的读取结束，停止连接不应受它拖累。
-  } finally { clearTimeout(timer); reader.cancel().catch(() => {}); }
+  } finally { clearTimeout(timer); combined.removeEventListener("abort", onAbort); reader.cancel().catch(() => {}); }
   if (chunk.received !== chunkLength(chunk)) throw new DownloadError("truncated_content");
   return { kind: "complete" };
 }
