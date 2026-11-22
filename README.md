@@ -89,7 +89,7 @@ xattr -d com.apple.quarantine ./pikpak-dl-cli-darwin-arm64
 .\pikpak-dl-cli-windows-x64.exe
 ```
 
-首次启动时按 Enter，在浏览器中打开 PikPak 官方授权页。授权页会逐项列出权限，请全部勾选，其中账号信息、管理文件与分享是必需的。密码只在官方页面输入。
+首次启动时按 Enter，在浏览器中打开 PikPak 官方授权页。授权页会逐项列出权限，请全部勾选，其中账号信息与管理文件是必需的。密码只在官方页面输入。
 
 <p align="center">
   <img src="docs/images/login.svg" alt="首次启动：在浏览器中完成 PikPak 官方授权" width="820">

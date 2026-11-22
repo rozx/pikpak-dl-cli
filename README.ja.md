@@ -89,7 +89,7 @@ xattr -d com.apple.quarantine ./pikpak-dl-cli-darwin-arm64
 .\pikpak-dl-cli-windows-x64.exe
 ```
 
-初回起動時に Enter を押すと、ブラウザで PikPak の公式認可ページが開きます。認可ページにはアプリの権限が一つずつ表示されるので、すべて選択してください。そのうちアカウント情報、ファイル管理、共有は必須です。パスワードは公式ページでのみ入力します。
+初回起動時に Enter を押すと、ブラウザで PikPak の公式認可ページが開きます。認可ページにはアプリの権限が一つずつ表示されるので、すべて選択してください。そのうちアカウント情報とファイル管理は必須です。パスワードは公式ページでのみ入力します。
 
 <p align="center">
   <img src="docs/images/ja/login.svg" alt="初回起動：ブラウザで PikPak の公式認可を完了する" width="820">

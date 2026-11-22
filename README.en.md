@@ -89,7 +89,7 @@ Run it in a terminal without arguments to open the full-screen interface (on Win
 .\pikpak-dl-cli-windows-x64.exe
 ```
 
-On first launch, press Enter to open the official PikPak authorization page in your browser. The page lists each permission. Select all of them; Account, Manage files and Shares are required. You enter your password only on the official page.
+On first launch, press Enter to open the official PikPak authorization page in your browser. The page lists each permission. Select all of them; Account and Manage files are required. You enter your password only on the official page.
 
 <p align="center">
   <img src="docs/images/en/login.svg" alt="First launch: authorize on the official PikPak page in the browser" width="820">
