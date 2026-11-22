@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { parseScopes } from "../auth/permissions";
+import { PERMISSIONS, parseScopes } from "../auth/permissions";
 
 export const ENDPOINTS = {
   issuer: "https://user.mypikpak.com",
@@ -138,13 +138,18 @@ export function newAttempt(now = Date.now()): Attempt {
     expiresAt: now + 15 * 60_000, used: false };
 }
 
+// 授权请求的范围：登录基础范围加上权限定义中的全部应用权限（含暂不使用的云下载）。
+// 2026-11-21 起 PikPak 授权页只列出请求中的应用权限（发现文档的 scopes_supported 也改为列出它们）；
+// 只请求 openid profile 时授权页没有可勾选的权限，“授权”按钮不可用。
+export const AUTHORIZATION_SCOPE = ["openid", "profile", ...PERMISSIONS.map(permission => permission.scope)].join(" ");
+
 export function authorizationUrl(client: Client, attempt: Attempt): string {
   const url = new URL(ENDPOINTS.authorization_endpoint);
   url.search = new URLSearchParams({
     response_type: "code",
     client_id: client.clientId,
     redirect_uri: client.redirectUri,
-    scope: "openid profile",
+    scope: AUTHORIZATION_SCOPE,
     state: attempt.state,
     code_challenge: createHash("sha256").update(attempt.verifier).digest("base64url"),
     code_challenge_method: "S256",

@@ -27,6 +27,10 @@ type Delivery = (workspace: FileWorkspace, signal: AbortSignal) => Promise<void>
 const releaseFailure = (error: unknown): string => error instanceof AppError ? error.code : error instanceof ProviderError && error.status === 429 ? "rate_limited" : "remote_request_failed";
 type PoolEntry = ActiveTarget & { controller: AbortController; done: Promise<void> };
 type ReleaseScope = { targets: ReleaseTarget[]; orphans: string[]; shares: string[]; reason: string | null };
+// 信号中断时完成的等待，用来让等待锁或等待预先转存的一方及时放弃。
+const aborted = (signal: AbortSignal) => new Promise<void>(resolve => {
+  if (signal.aborted) resolve(); else signal.addEventListener("abort", () => resolve(), { once: true });
+});
 export class Engine {
   private readonly restore: Restore;
   private readonly space: SpaceManager;
@@ -49,6 +53,13 @@ export class Engine {
   private readonly releases = new Set<Promise<void>>();
   // 云端操作锁（add-task-controls 决策 4）：自动回收与手动释放依次执行，不会同时为同一份副本发出删除。
   private cloudQueue: Promise<unknown> = Promise.resolve();
+  // 转存锁（presave-on-intake 决策 2）：预先转存与串行步骤的转存依次进行，空间计划不会把同一份剩余容量分给两个文件。
+  private saveQueue: Promise<void> = Promise.resolve();
+  // 预先转存（presave-on-intake）：正在转存的文件、中断控制器与本次结果；空间不足时到 presaveWaitUntil 之前不再尝试。
+  private presaveTarget: ActiveTarget | null = null;
+  private presaveHalt: AbortController | null = null;
+  private presaveDone: Promise<boolean> | null = null;
+  private presaveWaitUntil = 0;
   constructor(private readonly store: Store, private readonly secrets: SecretStore, private readonly drive: Drive,
     private readonly filesystem: LocalFileSystem, private readonly report: (event: RuntimeEvent) => void = () => {},
     private readonly http?: DownloadTransport,
@@ -59,6 +70,8 @@ export class Engine {
     this.listeners.add(listener); return () => { this.listeners.delete(listener); };
   }
   private event(event: RuntimeEvent): void {
+    // 文件交付完成或副本释放后可能腾出空间，预先转存立即重新评估。
+    if (event.type === "completed" || event.type === "copy_released") this.presaveWaitUntil = 0;
     this.report(event);
     for (const listener of this.listeners) listener(event);
   }
@@ -74,16 +87,19 @@ export class Engine {
   private haltPool(except?: string): void {
     for (const entry of this.pool.values()) if (entry.fileId !== except) entry.controller.abort();
     if (this.stepFile !== except) this.stepHalt?.abort();
+    if (this.presaveTarget?.fileId !== except) this.presaveHalt?.abort();
   }
   // 实际生效的同时下载数：配置值与账号等级上限中的较小值；未提供等级时按未知处理（1）。
   capacity(): number { return Math.min(configuredActiveFiles(this.store), this.options.tier?.cap ?? 1); }
   activeFiles(): ActiveTarget[] { return [...this.pool.values()].map(({ fileId, shareId }) => ({ fileId, shareId })); }
   isPooled(fileId: string): boolean { return this.pool.has(fileId); }
-  // 中断匹配的在途文件，等它们在安全点返回（检查点已保存）。
+  // 中断匹配的在途文件与预先转存，等它们在安全点返回（检查点已保存）。
   async stopActive(match: (target: ActiveTarget) => boolean = () => true): Promise<void> {
     const entries = [...this.pool.values()].filter(match);
+    const presave = this.presaveTarget && match(this.presaveTarget) ? this.presaveDone : null;
     for (const entry of entries) entry.controller.abort();
-    await Promise.allSettled(entries.map(entry => entry.done));
+    if (presave) this.presaveHalt?.abort();
+    await Promise.allSettled([...entries.map(entry => entry.done), ...presave ? [presave] : []]);
   }
   blockPersistence(): void { this.pause("database"); }
   private exclusive<T>(action: () => Promise<T>): Promise<T> {
@@ -91,10 +107,22 @@ export class Engine {
     this.cloudQueue = result.then(() => {}, () => {});
     return result;
   }
+  // 转存锁：按请求顺序依次执行；等待中被中断时立即放弃，不等前一个转存结束，也不打乱后面的顺序。
+  private async saving<T>(signal: AbortSignal, action: () => Promise<T>): Promise<T> {
+    const previous = this.saveQueue;
+    let release!: () => void;
+    const mine = new Promise<void>(resolve => { release = resolve; });
+    this.saveQueue = previous.then(() => mine);
+    try {
+      await Promise.race([previous, aborted(signal)]);
+      if (signal.aborted) throw signal.reason ?? Error("interrupted");
+      return await action();
+    } finally { release(); }
+  }
   // id 为 null 表示全部释放：只处理已完成或已取消任务的副本与记录，进行中的任务不动（避免释放后立即重新转存）。
   private releaseTargets(id: string | null): ReleaseScope {
     const found = this.store.releaseTargets(this.drive.accountId, id);
-    const free = (fileId: string) => !this.pool.has(fileId) && fileId !== this.stepFile && !this.releasing.has(fileId);
+    const free = (fileId: string) => !this.pool.has(fileId) && fileId !== this.stepFile && fileId !== this.presaveTarget?.fileId && !this.releasing.has(fileId);
     const candidates = id === null ? found.targets.filter(target => target.finished) : found.targets;
     const targets = candidates.filter(target => target.fileIds.every(free)), orphans = found.orphans.filter(free), shares = found.shares;
     const busy = candidates.length + found.orphans.length > targets.length + orphans.length;
@@ -274,6 +302,53 @@ export class Engine {
     }
     return true;
   }
+  // 预先转存一个文件（presave-on-intake 决策 1）：由会话的预先转存循环调用，与扫描、串行步骤和下载池并行。
+  // 按队列顺序把尚无副本的文件转存到云盘，空间不足时先按现有规则回收已交付的副本；仍放不下时停在这个文件、
+  // 记为等待云端空间，等有文件交付或副本释放后再试，最长 60 秒。用户暂停队列与任何系统暂停、限流期间不进行。
+  async presave(signal: AbortSignal): Promise<boolean> {
+    const halt = new AbortController(); this.presaveHalt = halt;
+    const done = this.presaveOnce(AbortSignal.any([signal, halt.signal])); this.presaveDone = done;
+    try { return await done; } finally { this.presaveTarget = null; this.presaveHalt = null; this.presaveDone = null; }
+  }
+  private async presaveOnce(signal: AbortSignal): Promise<boolean> {
+    const account = this.drive.accountId;
+    if (signal.aborted || this.blocked || this.store.paused(account) || this.store.config("queue_paused") === "1" || this.store.rateLimited(account)) return false;
+    if (Date.now() < this.presaveWaitUntil) return false;
+    // 选择与登记之间没有 await：串行步骤与手动释放据此避开这个文件。
+    const file = this.store.nextPresave(account, Date.now(), [...this.pool.keys(), ...this.releasing]);
+    if (!file) return false;
+    // 队列中第一个待转存的文件正由串行步骤处理：由步骤转存它，不越过它转存后面的文件，
+    // 否则后面的文件可能先占用空间、先下载（fix-presave-review-findings 决策 2）。
+    if (file.id === this.stepFile) return false;
+    this.presaveTarget = { fileId: file.id, shareId: file.shareId };
+    const accessReference = this.store.operationFor(account, file.id, "restore")?.secretRef ?? this.store.share(account, file.shareId).secretRef;
+    try {
+      return await this.saving(signal, async () => {
+        // 等锁期间文件可能已被取消、已有副本或状态已变：不再处理，循环随即选择下一个。
+        const before = this.store.file(account, file.id);
+        if (before.cancelled || this.store.copyForFile(account, file.id) || !["discovered", "ready", "retry_wait", "waiting_space"].includes(before.state)) return true;
+        // 与串行步骤相同，先改为 ready 并清除到期时间：之后的临时失败按同一分类记为稍后重试，转存后可以立即下载。
+        this.store.prepareSave(account, file.id);
+        const current = this.store.file(account, file.id);
+        // 先核对来源再计划空间：来源已不可用时不为它回收副本。
+        await this.restore.checkSource(current, signal);
+        const space = await this.exclusive(() => this.space.ensure(current.size, signal));
+        if (space === "too_large") { this.store.fileError(account, file.id, "file_exceeds_cloud_capacity"); return true; }
+        if (space !== "ready") {
+          // 仍放不下：与串行步骤相同记为等待云端空间；同一文件再次放不下时不重复写入事件区。
+          this.store.waitForSpace(account, file.id); this.presaveWaitUntil = Date.now() + 60000;
+          if (before.state !== "waiting_space") this.event({ type: "waiting_space", id: file.id, reason: space });
+          return false;
+        }
+        this.event({ type: "presaving", id: file.id });
+        await this.restore.ensure(current, signal);
+        // 不写入事件区（转存开始时已有一条），界面据此刷新云盘容量。
+        this.event({ type: "presaved", id: file.id });
+        return true;
+      });
+    } catch (error) { return this.failed(error, file, accessReference, signal); }
+  }
+
   async step(signal: AbortSignal): Promise<boolean> {
     const halt = new AbortController(); this.stepHalt = halt;
     try { return await this.stepOnce(AbortSignal.any([signal, halt.signal])); } finally { this.stepFile = null; this.stepHalt = null; }
@@ -287,6 +362,8 @@ export class Engine {
     if (this.pool.size >= capacity) return false;
     let file = this.store.nextFile(account, Date.now(), [...this.pool.keys(), ...this.releasing]);
     if (!file) return false;
+    // 下一个文件正在预先转存：等它结束后重新选择，下载顺序与队列一致（presave-on-intake 决策 3）。
+    if (this.presaveTarget?.fileId === file.id) { await Promise.race([this.presaveDone?.catch(() => {}), aborted(signal)]); return !signal.aborted; }
     this.stepFile = file.id;
     const accessReference = this.store.operationFor(account, file.id, "restore")?.secretRef ?? this.store.share(account, file.shareId).secretRef;
     // 串行部分：占用名额、检查已有副本、本地空间预检、空间计划与转存。下载、校验与发布交给 delivery。
@@ -325,14 +402,23 @@ export class Engine {
         if (await workspace.freeBytes() < remaining + 1048576n) { this.pause("local_space", file.id); return false; }
         if (!copy) {
           this.event({ type: "saving", id: file.id });
-          const previous = this.store.operationFor(account, file.id, "restore");
-          if (!previous?.payload.sent) {
-            await this.restore.checkSource(file, signal);
-            const needed = file.size, space = await this.exclusive(() => this.space.ensure(needed, signal));
-            if (space === "too_large") { this.store.fileError(account, file.id, "file_exceeds_cloud_capacity"); return true; }
-            if (space !== "ready") { this.store.waitForSpace(account, file.id); this.event({ type: "waiting_space", id: file.id, reason: space }); return true; }
+          const target = file;
+          const saved = await this.saving(signal, async () => {
+            const previous = this.store.operationFor(account, target.id, "restore");
+            if (!previous?.payload.sent) {
+              await this.restore.checkSource(target, signal);
+              const space = await this.exclusive(() => this.space.ensure(target.size, signal));
+              if (space !== "ready") return space;
+            }
+            return this.restore.ensure(target, signal);
+          });
+          if (saved === "too_large") { this.store.fileError(account, file.id, "file_exceeds_cloud_capacity"); return true; }
+          if (typeof saved === "string") {
+            // 空间状态是共享的：预先转存同样暂缓，直到有文件交付、副本释放或 60 秒后。
+            this.store.waitForSpace(account, file.id); this.presaveWaitUntil = Date.now() + 60000;
+            this.event({ type: "waiting_space", id: file.id, reason: saved }); return true;
           }
-          copy = await this.restore.ensure(file, signal);
+          copy = saved;
         }
         file = this.store.file(account, file.id);
         if (file.cancelled || this.store.share(account, file.shareId).cancelled) return true;

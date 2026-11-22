@@ -22,6 +22,8 @@ const stateLooks: Record<FileState, Omit<Look, "label">> = {
 };
 const stateLook = (state: FileState): Look => ({ ...stateLooks[state], label: t().states[state] });
 const inProgress: readonly FileState[] = ["saving", "awaiting_remote", "downloading", "verifying", "publishing"];
+// 已预先转存、等待下载（presave-on-intake 决策 4）：转存已完成，云盘中有保留的副本，文件还没开始下载。
+const savedWaiting = (file: Pick<FileView, "state" | "copyState">) => file.state === "awaiting_remote" && file.copyState === "retained";
 
 type Reason = keyof Messages["reasons"];
 const aliases: Record<string, Reason> = { share_access_required: "access_required", waiting_space: "cloud_space",
@@ -49,6 +51,7 @@ export function fileLook(file: FileView, options: { userPaused: boolean; sharePa
   if (file.state === "completed") return options.missing ? { ...stateLooks.completed, tone: "warning", label: t().looks.completedMissing } : stateLook("completed");
   if (file.cancelled) return { icon: "⊘", tone: "muted", label: t().looks.cancelled };
   if (file.paused || options.sharePaused) return { icon: "⏸", tone: "warning", label: t().looks.paused };
+  if (savedWaiting(file)) return { icon: "·", tone: "cloud", label: t().looks.saved };
   if (options.userPaused && inProgress.includes(file.state)) return { icon: "⏸", tone: "warning", label: t().looks.paused };
   const look = stateLook(file.state);
   if (file.lastError && ["failed", "needs_attention", "retry_wait"].includes(file.state)) return { ...look, label: `${look.label} · ${explain(file.lastError).reason}` };
@@ -63,7 +66,7 @@ export function fileLocation(file: FileView, missing = false): Location {
   return { local, cloud: file.copyState !== null && file.copyState !== "deleted" };
 }
 
-export type ShareCounts = { total: number; completed: number; downloading: number; transferring: number; queued: number; paused: number; failed: number; waiting: number; cancelled: number;
+export type ShareCounts = { total: number; completed: number; downloading: number; transferring: number; saved: number; queued: number; paused: number; failed: number; waiting: number; cancelled: number;
   local: number; partial: number; cloud: number; missing: number; releasing: number };
 // 位置图标（add-task-controls 决策 6）：每行只用一个单宽文本符号（不用 emoji）。
 // ▣ 只在本地（绿色；只有下载了一部分的数据、云端也没有副本时为灰色），⧉ 本地与云端都有（青色），☁ 只在云端（淡蓝色，含下载中的文件），都不在时留空。
@@ -79,7 +82,7 @@ export function locationMark(location: Location): { mark: string; tone: Tone } |
 // 分享的位置：有已完成且在本地的文件即为本地，否则有下载了一部分的文件即为部分；有文件在云端即为云端。
 export const shareLocation = (counts: ShareCounts): Location => ({ local: counts.local ? "full" : counts.partial ? "partial" : null, cloud: counts.cloud > 0 });
 export function shareCounts(files: FileView[], userPaused: boolean, sharePaused = false, missing: ReadonlySet<string> = new Set(), releasing: ReadonlySet<string> = new Set()): ShareCounts {
-  const counts: ShareCounts = { total: files.length, completed: 0, downloading: 0, transferring: 0, queued: 0, paused: 0, failed: 0, waiting: 0, cancelled: 0,
+  const counts: ShareCounts = { total: files.length, completed: 0, downloading: 0, transferring: 0, saved: 0, queued: 0, paused: 0, failed: 0, waiting: 0, cancelled: 0,
     local: 0, partial: 0, cloud: 0, missing: 0, releasing: 0 };
   for (const file of files) {
     if (releasing.has(file.id)) counts.releasing++;
@@ -89,6 +92,7 @@ export function shareCounts(files: FileView[], userPaused: boolean, sharePaused 
     if (file.state === "completed") counts.completed++;
     else if (file.cancelled) counts.cancelled++;
     else if (file.paused || sharePaused) counts.paused++;
+    else if (savedWaiting(file)) counts.saved++;
     else if (inProgress.includes(file.state)) {
       if (userPaused) counts.paused++;
       else if (file.state === "saving" || file.state === "awaiting_remote") counts.transferring++;
@@ -161,7 +165,7 @@ export function describeEvent(event: RuntimeEvent, names: NameLookup): LogLine |
     case "scanned": return { icon: "⟳", tone: "scan", text: text.scanned(share(event.id), event.count ?? 0) };
     case "scan_incomplete": return { icon: "!", tone: "warning", text: text.scanIncomplete(share(event.id)) };
     case "scan_waiting": return { icon: "⌛", tone: "warning", text: text.scanWaiting(share(event.id), why()) };
-    case "saving": return { icon: "⇡", tone: "transfer", text: text.saving(file(event.id)) };
+    case "saving": case "presaving": return { icon: "⇡", tone: "transfer", text: text.saving(file(event.id)) };
     case "downloading": return { icon: "↓", tone: "active", text: text.downloading(file(event.id)) };
     case "completed": return { icon: "✓", tone: "done", text: text.completed(file(event.id)) };
     case "waiting_space": return { icon: "⌛", tone: "warning", text: text.waitingSpace(file(event.id)) };

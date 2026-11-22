@@ -24,6 +24,18 @@ test("每种文件状态都有图标、色调与说明；取消、暂停与完�
   expect(fileLook(file("f", "waiting_space"), { userPaused: false })).toMatchObject({ icon: "⌛", tone: "warning", label: "等待云端空间" });
 });
 
+test("预先转存：已转存、等待下载的文件显示为已转存而不是转存中，队列暂停时不显示暂停，分享计数单列", () => {
+  const saved = file("f", "awaiting_remote", { copyState: "retained" });
+  expect(fileLook(saved, { userPaused: false })).toEqual({ icon: "·", tone: "cloud", label: "已转存，等待下载" });
+  expect(fileLook(saved, { userPaused: true }).label).toBe("已转存，等待下载");
+  expect(fileLook(file("f", "awaiting_remote"), { userPaused: false })).toMatchObject({ label: "等待转存完成", active: true });
+  expect(fileLook(saved, { userPaused: false, sharePaused: true }).label).toBe("已暂停");
+  const counts = shareCounts([saved, file("g", "awaiting_remote"), file("h", "ready")], false);
+  expect(counts).toMatchObject({ saved: 1, transferring: 1, queued: 1, cloud: 1 });
+  expect(describeEvent({ type: "presaving", id: "f" }, { file: () => "f.mkv", share: () => "分享" })?.text).toContain("f.mkv");
+  expect(describeEvent({ type: "presaved", id: "f" }, { file: () => "f.mkv", share: () => "分享" })).toBeNull();
+});
+
 test("所有已知原因码与暂停原因都有专门的中文说明和建议", () => {
   for (const reason of knownReasons) {
     const explanation = explain(reason);

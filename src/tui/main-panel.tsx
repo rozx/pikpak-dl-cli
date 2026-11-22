@@ -41,7 +41,7 @@ function CountsText({ counts, theme, scanning, failure, passCode, cancelled, pau
   return (
     <Text>
       <Text {...paint(counts.completed === counts.total && counts.total > 0 ? "done" : "text")}>  {text.completed(counts.completed, counts.total)}</Text>
-      {part(counts.downloading, label.downloading, "active")}{part(counts.transferring, label.transferring, "transfer")}{part(counts.paused, label.paused, "warning")}
+      {part(counts.downloading, label.downloading, "active")}{part(counts.transferring, label.transferring, "transfer")}{part(counts.saved, label.saved, "cloud")}{part(counts.paused, label.paused, "warning")}
       {part(counts.queued, label.queued, "muted")}{part(counts.failed, label.failed, "error")}{part(counts.waiting, label.waiting, "warning")}{part(counts.cancelled, label.cancelled, "muted")}
       {part(counts.releasing, label.releasing, "transfer")}{part(counts.missing, label.missing, "warning")}
       {cancelled && <Text {...paint("muted")}>{text.shareCancelled}</Text>}

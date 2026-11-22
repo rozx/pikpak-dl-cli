@@ -155,6 +155,26 @@ export class Store {
       ORDER BY CASE WHEN f.state IN ('publishing','reconciling') THEN 0 ELSE 1 END,f.rowid LIMIT 1`, accountId, now, JSON.stringify(exclude));
     return row ? this.file(accountId, row.id) : null;
   }
+  // 预先转存（presave-on-intake 决策 1）：队列顺序中第一个尚无云端副本、也没有已发出转存的文件。
+  // 等待云端空间的文件不看重试时间（空间由预先转存自己判断）；稍后重试的文件等到重试时间。
+  nextPresave(accountId: string, now = Date.now(), exclude: string[] = []): FileRecord | null {
+    const row = this.get<{ id: string }>(`SELECT f.id FROM files f JOIN shares s ON s.id=f.share_id WHERE f.account_id=? AND f.cancelled=0 AND s.cancelled=0
+      AND f.paused=0 AND s.paused=0 AND f.state IN ('discovered','ready','retry_wait','waiting_space')
+      AND (f.state<>'retry_wait' OR f.retry_at IS NULL OR f.retry_at<=?)
+      AND NOT EXISTS(SELECT 1 FROM copy_references r JOIN copies c ON c.id=r.copy_id WHERE r.file_id=f.id AND c.state='retained')
+      AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.file_id=f.id AND o.kind='restore' AND o.status<>'confirmed' AND json_extract(o.payload_json,'$.sent')=1)
+      AND f.id NOT IN (SELECT value FROM json_each(?))
+      ORDER BY f.rowid LIMIT 1`, accountId, now, JSON.stringify(exclude));
+    return row ? this.file(accountId, row.id) : null;
+  }
+  // 预先转存开始处理一个文件（fix-presave-review-findings 决策 1、3）：与串行步骤一样先改为 ready，之后的失败按同一分类处理；
+  // 同时清除等待空间或稍后重试的到期时间，转存完成后串行步骤可以立即下载。失败或仍放不下时由相应处理重新设定。
+  prepareSave(accountId: string, fileId: string): void {
+    this.transaction(() => {
+      if (this.file(accountId, fileId).state !== "ready") this.transition(accountId, fileId, "ready");
+      this.run("UPDATE files SET retry_at=NULL WHERE id=?", fileId);
+    });
+  }
   waitForSpace(accountId: string, fileId: string, now = Date.now()): void {
     this.file(accountId, fileId); this.run("UPDATE files SET state='waiting_space',retry_at=?,last_error='cloud_space' WHERE id=?", now + 60000, fileId);
   }

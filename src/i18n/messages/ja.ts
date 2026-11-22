@@ -144,7 +144,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
     discovered: "待機中", ready: "待機中", saving: "保存中", awaiting_remote: "保存完了待ち", downloading: "ダウンロード中", verifying: "検証中",
     publishing: "書き込み中", completed: "完了", waiting_space: "クラウドの空き待ち", retry_wait: "後で再試行", failed: "失敗", reconciling: "確認中", needs_attention: "要対応",
   },
-  looks: { releasing: "解放中", completedMissing: "完了 · ローカルファイルがありません", cancelled: "キャンセル済み", paused: "一時停止中" },
+  looks: { releasing: "解放中", completedMissing: "完了 · ローカルファイルがありません", cancelled: "キャンセル済み", paused: "一時停止中", saved: "保存済み、ダウンロード待ち" },
 
   reasons: {
     access_required: { reason: "共有にパスコードが必要か、パスコードが正しくありません", advice: "共有を選んで Enter でパスコードを入力するか、リンクとパスコードを含む共有テキスト全体をもう一度コピーしてください。" },
@@ -273,7 +273,7 @@ PikPak クラウドドライブをダウンロードの中継に使います。�
     scanning: "スキャン中…",
     enterPassCode: "Enter でパスコードを入力",
     completed: (done, total) => `${done}/${total} 完了`,
-    counts: { downloading: "ダウンロード中", transferring: "保存中", paused: "一時停止", queued: "待機", failed: "失敗", waiting: "待ち", cancelled: "キャンセル済み", releasing: "解放中", missing: "ローカルなし" },
+    counts: { downloading: "ダウンロード中", transferring: "保存中", saved: "保存済み", paused: "一時停止", queued: "待機", failed: "失敗", waiting: "待ち", cancelled: "キャンセル済み", releasing: "解放中", missing: "ローカルなし" },
     shareCancelled: " · 共有はキャンセル済み",
     sharePaused: " · 一時停止中",
     tooSmall: (columns, rows, minColumns, minRows) => `ウィンドウが小さすぎます（${columns}×${rows}）。${minColumns}×${minRows} 以上に広げてください`,

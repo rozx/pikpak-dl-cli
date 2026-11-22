@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ENDPOINTS, ProviderError, authorizationUrl, discover, exchange, newAttempt, register,
   requestJson, takeAuthorizationCode, type Client, type Transport } from "../src/pikpak/protocol";
+import { PERMISSIONS } from "../src/auth/permissions";
 
 const redirectUri = "http://127.0.0.1:53682/callback";
 const client: Client = { clientId: "synthetic-client", clientSecret: "synthetic-secret", redirectUri,
@@ -15,6 +16,12 @@ describe("授权响应边界", () => {
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.href).not.toContain(attempt.verifier);
     expect(url.href).not.toContain(client.clientSecret);
+  });
+  test("授权请求列出全部应用权限，授权页才有可授予的权限", () => {
+    const url = new URL(authorizationUrl(client, newAttempt()));
+    const scopes = url.searchParams.get("scope")!.split(" ");
+    expect(scopes).toEqual(["openid", "profile", "account", "files:manage", "share", "cloud_download"]);
+    for (const permission of PERMISSIONS) expect(scopes).toContain(permission.scope);
   });
   test("错误或重复 state 不消费合法尝试，合法响应只能消费一次", () => {
     const attempt = newAttempt();
