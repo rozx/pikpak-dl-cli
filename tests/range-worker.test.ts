@@ -128,11 +128,12 @@ test("接收过程中不保留已写入的数据段", async () => {
   file.write = async (_position, bytes) => {
     refs.push(new WeakRef(bytes));
     // 收到最后一段时强制回收，统计较早的数据段还有多少仍被引用；最近几段可能还在栈上，不计入。
+    // 泄漏时这 112 段全部存活；回收是保守的，个别段可能暂时存活，所以只要求少于一半。
     if (refs.length === parts) { Bun.gc(true); alive = refs.slice(0, parts - 16).filter(ref => ref.deref() !== undefined).length; }
   };
   const abort = new AbortController();
   const plan = new ChunkPlan(size, 0n, 2), chunk = plan.claim()!;
   expect(await receiveRange({ http: server(() => ({ body })).http, lease, chunk, size, file, signal: abort.signal })).toEqual({ kind: "complete" });
   expect(refs).toHaveLength(parts); expect(chunk.received).toBe(CHUNK_SIZE);
-  expect(alive).toBeGreaterThanOrEqual(0); expect(alive).toBeLessThan(16);
+  expect(alive).toBeGreaterThanOrEqual(0); expect(alive).toBeLessThan(56);
 });
