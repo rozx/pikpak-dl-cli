@@ -29,7 +29,7 @@ export type LiveOptions = {
 // 剪贴板接收的结果事件；一次复制可能产生多条，窗口只前置一次。
 const intakeEvents = new Set(["received", "received_cancelled", "intake_issues"]);
 // 这些事件前后会发生转存、回收或交付，云盘容量随之变化。
-const quotaEvents = new Set(["downloading", "completed", "waiting_space", "copy_released", "release_finished"]);
+const quotaEvents = new Set(["downloading", "completed", "waiting_space", "copy_released", "release_finished", "presaved"]);
 const pathExists = (path: string): Promise<boolean | null> =>
   stat(path).then(() => true, (error: { code?: string }) => error.code === "ENOENT" || error.code === "ENOTDIR" ? false : null);
 

@@ -146,7 +146,7 @@ export const zhCN = {
     discovered: "排队中", ready: "排队中", saving: "转存中", awaiting_remote: "等待转存完成", downloading: "下载中", verifying: "校验中",
     publishing: "正在落盘", completed: "已完成", waiting_space: "等待云端空间", retry_wait: "稍后重试", failed: "失败", reconciling: "正在核对", needs_attention: "需要处理",
   } satisfies Record<FileState, string>,
-  looks: { releasing: "释放中", completedMissing: "已完成 · 本地文件已不在", cancelled: "已取消", paused: "已暂停" },
+  looks: { releasing: "释放中", completedMissing: "已完成 · 本地文件已不在", cancelled: "已取消", paused: "已暂停", saved: "已转存，等待下载" },
 
   reasons: {
     access_required: { reason: "分享需要提取码，或提取码不正确", advice: "选中该分享按 Enter 输入提取码，或重新复制包含链接和提取码的完整分享文本。" },
@@ -275,7 +275,7 @@ export const zhCN = {
     scanning: "扫描中…",
     enterPassCode: "按 Enter 输入提取码",
     completed: (done: number, total: number) => `${done}/${total} 完成`,
-    counts: { downloading: "下载中", transferring: "转存中", paused: "暂停", queued: "排队", failed: "失败", waiting: "等待", cancelled: "已取消", releasing: "释放中", missing: "本地缺失" },
+    counts: { downloading: "下载中", transferring: "转存中", saved: "已转存", paused: "暂停", queued: "排队", failed: "失败", waiting: "等待", cancelled: "已取消", releasing: "释放中", missing: "本地缺失" },
     shareCancelled: " · 分享已取消",
     sharePaused: " · 已暂停",
     tooSmall: (columns: number, rows: number, minColumns: number, minRows: number) => `窗口太小（${columns}×${rows}），请放大到至少 ${minColumns}×${minRows}`,

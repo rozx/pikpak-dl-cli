@@ -20,9 +20,9 @@ export type SessionCommand =
   | { kind: "pauseTask"; id: string } | { kind: "resumeTask"; id: string } | { kind: "startAll" } | { kind: "releaseCopy"; id: string } | { kind: "releaseAll" };
 export type CommandResult = { ok: true; ids: string[]; issues: string[] } | { ok: false; reason: string };
 // stopActive / isPooled 对应下载池（add-concurrent-file-downloads）；只有串行执行器的测试替身可以不提供。
-// scan 对应独立的扫描循环（scan-shares-on-intake）；不提供时会话不扫描。
+// scan 对应独立的扫描循环（scan-shares-on-intake）；不提供时会话不扫描。presave 对应预先转存循环（presave-on-intake）；不提供时只在下载前转存。
 export type SessionEngine = Pick<Engine, "step" | "resumeLocalPause" | "resumeTrafficPause" | "reconcile" | "blockPersistence" | "subscribe">
-  & Partial<Pick<Engine, "scan" | "stopActive" | "isPooled" | "releasable" | "release" | "settleReleases" | "releasingFiles">>;
+  & Partial<Pick<Engine, "scan" | "presave" | "stopActive" | "isPooled" | "releasable" | "release" | "settleReleases" | "releasingFiles">>;
 type Pending = { command: SessionCommand; resolve: (result: CommandResult) => void };
 // 扫描循环当前的扫描：shareId 由 scanning 事件填入。
 type CurrentScan = { shareId: string | null; controller: AbortController; done: Promise<boolean> };
@@ -93,10 +93,13 @@ export class RuntimeSession {
     if (watching) this.startIntake();
     this.emit({ type: "started", ...(watching ? {} : { reason: "clipboard_off" }) });
     const scanning = this.scanLoop(combined);
+    let presaving: Promise<void> = Promise.resolve();
     try {
       await this.engine.resumeLocalPause(combined);
       await this.engine.resumeTrafficPause(combined);
       if (!this.store.paused(this.accountId)) await this.engine.reconcile(combined);
+      // 启动核对之后才开始预先转存：结果未知的转存先由核对处理。
+      presaving = this.presaveLoop(combined);
       while (!combined.aborted) {
         await this.drain();
         if (combined.aborted) break;
@@ -109,7 +112,7 @@ export class RuntimeSession {
       }
     } finally {
       // 中断时下载池中的文件各自在安全点停止并保存检查点。
-      halt.abort(); this.wake(); await this.engine.stopActive?.().catch(() => {}); await scanning; await this.engine.settleReleases?.().catch(() => {});
+      halt.abort(); this.wake(); await this.engine.stopActive?.().catch(() => {}); await scanning; await presaving; await this.engine.settleReleases?.().catch(() => {});
       await this.stopIntake(); unsubscribe();
       this.stopped = true; this.running = null;
       for (const item of this.pending.splice(0)) item.resolve({ ok: false, reason: "stopped" });
@@ -134,6 +137,15 @@ export class RuntimeSession {
       const progressed = await current.done;
       this.scanning = null;
       if (!progressed && !controller.signal.aborted) await this.idle(signal);
+    }
+  }
+  // 预先转存循环（presave-on-intake 决策 1）：有文件可转存就继续，否则空闲等待；取消、暂停与停止由 stopActive 中断当前转存。
+  private async presaveLoop(signal: AbortSignal): Promise<void> {
+    if (!this.engine.presave) return;
+    while (!signal.aborted) {
+      let progressed = false;
+      try { progressed = await this.engine.presave(signal); } catch { this.engine.blockPersistence(); }
+      if (!progressed) await this.idle(signal);
     }
   }
   // 取消或暂停正在扫描的分享（决策 5）：标记已经写入，中断扫描并等它在安全点返回。

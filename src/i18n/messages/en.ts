@@ -142,7 +142,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
     discovered: "Queued", ready: "Queued", saving: "Saving to cloud", awaiting_remote: "Waiting for save", downloading: "Downloading", verifying: "Verifying",
     publishing: "Writing to disk", completed: "Completed", waiting_space: "Waiting for cloud space", retry_wait: "Retrying later", failed: "Failed", reconciling: "Checking", needs_attention: "Needs attention",
   },
-  looks: { releasing: "Releasing", completedMissing: "Completed · local file is gone", cancelled: "Cancelled", paused: "Paused" },
+  looks: { releasing: "Releasing", completedMissing: "Completed · local file is gone", cancelled: "Cancelled", paused: "Paused", saved: "Saved, waiting to download" },
 
   reasons: {
     access_required: { reason: "The share needs a pass code, or the pass code is wrong", advice: "Select the share and press Enter to type the pass code, or copy the complete share text with the link and pass code again." },
@@ -271,7 +271,7 @@ Usage: pikpak-dl-cli                  Open the full-screen interface in an inter
     scanning: "Scanning…",
     enterPassCode: "press Enter to type the pass code",
     completed: (done, total) => `${done}/${total} done`,
-    counts: { downloading: "downloading", transferring: "saving", paused: "paused", queued: "queued", failed: "failed", waiting: "waiting", cancelled: "cancelled", releasing: "releasing", missing: "missing locally" },
+    counts: { downloading: "downloading", transferring: "saving", saved: "saved", paused: "paused", queued: "queued", failed: "failed", waiting: "waiting", cancelled: "cancelled", releasing: "releasing", missing: "missing locally" },
     shareCancelled: " · share cancelled",
     sharePaused: " · paused",
     tooSmall: (columns, rows, minColumns, minRows) => `Window too small (${columns}×${rows}); enlarge it to at least ${minColumns}×${minRows}`,

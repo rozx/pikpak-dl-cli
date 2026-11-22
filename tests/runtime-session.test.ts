@@ -152,7 +152,7 @@ test.if(nativeFiles)("暂停后重建会话仍暂停：照常扫描但不转存�
   } finally { await f.close(); }
 });
 
-test.if(nativeFiles)("下载进行中接收的分享立即扫描：不等当前文件下载结束，下载不受影响", async () => {
+test.if(nativeFiles)("下载进行中接收的分享立即扫描并预先转存：不等当前文件下载结束，下载不受影响", async () => {
   const f = await engineFixture(localFiles(), 1, [3 * 1024 * 1024]); f.state.limit = 10n ** 9n;
   // 第一份数据之后挂起，直到中断：文件一直停在下载中。
   const fetch = async (url: string, init: RequestInit) => {
@@ -172,7 +172,11 @@ test.if(nativeFiles)("下载进行中接收的分享立即扫描：不等当前�
     const next = result.ok ? result.ids[0]! : "";
     await until(() => !!next && f.store.share("account", next).scanStatus === "complete");
     expect(f.store.files("account", next)).toHaveLength(1);
-    expect(first()!.state).toBe("downloading"); expect(f.state.saves).toBe(1);
+    // 新分享的文件在当前文件下载期间就转存到云盘，等轮到它时直接下载。
+    const queued = f.store.files("account", next)[0]!;
+    await until(() => f.store.copyForFile("account", queued.id) !== null);
+    expect(f.store.file("account", queued.id).state).toBe("awaiting_remote");
+    expect(first()!.state).toBe("downloading"); expect(f.state.saves).toBe(2);
   } finally { abort.abort(); await running; await f.close(); }
 }, 20000);
 
